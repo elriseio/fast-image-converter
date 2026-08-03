@@ -232,6 +232,113 @@ impl Codec for PngToWebp {
     }
 }
 
+/// WebP input -> PNG output (lossless).
+#[derive(Debug, Clone, Copy)]
+pub struct WebpToPng;
+
+impl Codec for WebpToPng {
+    fn accepted_extensions(&self) -> &'static [&'static str] {
+        &["webp"]
+    }
+
+    fn output_extension(&self) -> &'static str {
+        "png"
+    }
+
+    fn resize_policy(&self) -> ResizePolicy {
+        ResizePolicy::default()
+    }
+
+    fn decode(&self, src: &Path) -> Result<image::DynamicImage, CodecError> {
+        image::ImageReader::open(src)
+            .map_err(|e| CodecError::Decode(e.to_string()))?
+            .with_guessed_format()
+            .map_err(|e| CodecError::Decode(e.to_string()))?
+            .decode()
+            .map_err(|e| CodecError::Decode(e.to_string()))
+    }
+
+    fn encode(
+        &self,
+        img: &image::DynamicImage,
+        dst: &Path,
+    ) -> Result<u64, CodecError> {
+        let rgba = img.to_rgba8();
+        let file = std::fs::File::create(dst)
+            .map_err(|e| CodecError::Io(e.to_string()))?;
+        let mut writer = std::io::BufWriter::new(file);
+        let encoder = image::codecs::png::PngEncoder::new(&mut writer);
+        use image::ImageEncoder;
+        encoder
+            .write_image(
+                rgba.as_raw(),
+                rgba.width(),
+                rgba.height(),
+                image::ExtendedColorType::Rgba8,
+            )
+            .map_err(|e| CodecError::Encode(e.to_string()))?;
+        let out_bytes = std::fs::metadata(dst)
+            .map_err(|e| CodecError::Io(e.to_string()))?
+            .len();
+        Ok(out_bytes)
+    }
+}
+
+/// WebP input -> JPEG output (lossy, quality 85).
+#[derive(Debug, Clone, Copy)]
+pub struct WebpToJpeg;
+
+impl Codec for WebpToJpeg {
+    fn accepted_extensions(&self) -> &'static [&'static str] {
+        &["webp"]
+    }
+
+    fn output_extension(&self) -> &'static str {
+        "jpg"
+    }
+
+    fn resize_policy(&self) -> ResizePolicy {
+        ResizePolicy::default()
+    }
+
+    fn decode(&self, src: &Path) -> Result<image::DynamicImage, CodecError> {
+        image::ImageReader::open(src)
+            .map_err(|e| CodecError::Decode(e.to_string()))?
+            .with_guessed_format()
+            .map_err(|e| CodecError::Decode(e.to_string()))?
+            .decode()
+            .map_err(|e| CodecError::Decode(e.to_string()))
+    }
+
+    fn encode(
+        &self,
+        img: &image::DynamicImage,
+        dst: &Path,
+    ) -> Result<u64, CodecError> {
+        let rgb = img.to_rgb8();
+        let file = std::fs::File::create(dst)
+            .map_err(|e| CodecError::Io(e.to_string()))?;
+        let mut writer = std::io::BufWriter::new(file);
+        let encoder = image::codecs::jpeg::JpegEncoder::new_with_quality(
+            &mut writer,
+            WEBP_QUALITY as u8,
+        );
+        use image::ImageEncoder;
+        encoder
+            .write_image(
+                rgb.as_raw(),
+                rgb.width(),
+                rgb.height(),
+                image::ExtendedColorType::Rgb8,
+            )
+            .map_err(|e| CodecError::Encode(e.to_string()))?;
+        let out_bytes = std::fs::metadata(dst)
+            .map_err(|e| CodecError::Io(e.to_string()))?
+            .len();
+        Ok(out_bytes)
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -286,6 +393,47 @@ mod tests {
         let head = std::fs::read(&dst).unwrap();
         assert_eq!(&head[0..4], b"RIFF");
         assert_eq!(&head[8..12], b"WEBP");
+        let _ = std::fs::remove_dir_all(&tmp);
+    }
+
+    #[test]
+    fn webp_to_png_round_trip_is_lossless() {
+        let tmp = workspace_tmp();
+        let src = tmp.join("input.webp");
+        let dst = tmp.join("output.png");
+        let img = image::RgbImage::from_fn(320, 240, |x, y| {
+            image::Rgb([(x * 3) as u8, (y * 5) as u8, ((x + y) * 7) as u8])
+        });
+        let rgba = image::DynamicImage::ImageRgb8(img.clone()).to_rgba8();
+        let enc = webp::Encoder::from_rgba(rgba.as_raw(), 320, 240);
+        let mem = enc.encode(WEBP_QUALITY);
+        std::fs::write(&src, mem.as_ref()).unwrap();
+        let report = WebpToPng.convert_one(&src, &dst).unwrap();
+        assert!(report.out_bytes > 0);
+        assert!(dst.exists());
+        let head = std::fs::read(&dst).unwrap();
+        assert_eq!(&head[0..8], &[0x89, b'P', b'N', b'G', 0x0D, 0x0A, 0x1A, 0x0A]);
+        let _ = std::fs::remove_dir_all(&tmp);
+    }
+
+    #[test]
+    fn webp_to_jpeg_writes_jpeg_magic() {
+        let tmp = workspace_tmp();
+        let src = tmp.join("input.webp");
+        let dst = tmp.join("output.jpg");
+        let rgba = image::RgbaImage::from_fn(320, 240, |x, y| {
+            image::Rgba([(x * 3) as u8, (y * 5) as u8, ((x + y) * 7) as u8, 255])
+        });
+        let enc = webp::Encoder::from_rgba(rgba.as_raw(), 320, 240);
+        let mem = enc.encode(WEBP_QUALITY);
+        std::fs::write(&src, mem.as_ref()).unwrap();
+        let report = WebpToJpeg.convert_one(&src, &dst).unwrap();
+        assert!(report.out_bytes > 0);
+        let head = std::fs::read(&dst).unwrap();
+        // JPEG SOI marker: FF D8 FF
+        assert_eq!(head[0], 0xFF);
+        assert_eq!(head[1], 0xD8);
+        assert_eq!(head[2], 0xFF);
         let _ = std::fs::remove_dir_all(&tmp);
     }
 
