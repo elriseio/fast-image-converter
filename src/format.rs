@@ -30,6 +30,16 @@ impl ResizePolicy {
     }
 }
 
+impl Default for ResizePolicy {
+    fn default() -> Self {
+        // v0 baseline per ADR-0002.
+        ResizePolicy::PortraitLandscape {
+            portrait: 800,
+            landscape: 1000,
+        }
+    }
+}
+
 /// Codec error variants. Mapped to exit codes by `converter-core` and
 /// `cli-frontend` (see `docs/contracts/codec-bounds.md`).
 #[derive(Debug)]
@@ -121,3 +131,53 @@ fn apply_resize(
     }
     img.resize(target_w, u32::MAX, image::imageops::FilterType::Lanczos3)
 }
+
+/// v0 baseline codec: JPEG input -> WebP output with the per-orientation
+/// resize policy and quality 85.
+///
+/// This codec preserves the v0 `gallery-compress` pipeline bit-for-bit
+/// for the no-flags invocation path (ADR-0002). The order of operations
+/// (decode -> resize -> to_rgb8 -> webp encode) is preserved exactly
+/// to keep output bytes deterministic.
+#[derive(Debug, Clone, Copy)]
+pub struct JpegToWebp;
+
+impl Codec for JpegToWebp {
+    fn accepted_extensions(&self) -> &'static [&'static str] {
+        &["jpg", "jpeg"]
+    }
+
+    fn output_extension(&self) -> &'static str {
+        "webp"
+    }
+
+    fn resize_policy(&self) -> ResizePolicy {
+        ResizePolicy::default()
+    }
+
+    fn decode(&self, src: &Path) -> Result<image::DynamicImage, CodecError> {
+        image::ImageReader::open(src)
+            .map_err(|e| CodecError::Decode(e.to_string()))?
+            .with_guessed_format()
+            .map_err(|e| CodecError::Decode(e.to_string()))?
+            .decode()
+            .map_err(|e| CodecError::Decode(e.to_string()))
+    }
+
+    fn encode(
+        &self,
+        img: &image::DynamicImage,
+        dst: &Path,
+    ) -> Result<u64, CodecError> {
+        let rgb = img.to_rgb8();
+        let encoder =
+            webp::Encoder::from_rgb(rgb.as_raw(), rgb.width(), rgb.height());
+        let memory = encoder.encode(WEBP_QUALITY);
+        let bytes: Vec<u8> = memory.as_ref().to_vec();
+        std::fs::write(dst, &bytes).map_err(|e| CodecError::Io(e.to_string()))?;
+        Ok(bytes.len() as u64)
+    }
+}
+
+/// v0 baseline WebP quality. Matches the QUALITY constant in v0 src/main.rs.
+pub const WEBP_QUALITY: f32 = 85.0;

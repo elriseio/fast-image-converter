@@ -3,16 +3,12 @@ use std::fs;
 use std::path::{Path, PathBuf};
 use std::process::ExitCode;
 
-use image::imageops::FilterType;
-use image::ImageReader;
 use rayon::prelude::*;
-use webp::Encoder;
 
 mod format;
+use format::{Codec, JpegToWebp};
 
-const QUALITY: f32 = 85.0;
-const PORTRAIT_MAX_W: u32 = 800;
-const LANDSCAPE_MAX_W: u32 = 1000;
+const BINARY_NAME: &str = "gallery-compress";
 const DEFAULT_GALLERY_BASE: &str =
     "/home/alex/Er/VFSite/vfatina-home/public/images/gallery";
 
@@ -34,36 +30,39 @@ fn main() -> ExitCode {
     };
 
     if !dir.is_dir() {
-        eprintln!("gallery-compress: not a directory: {}", dir.display());
+        eprintln!("{BINARY_NAME}: not a directory: {}", dir.display());
         return ExitCode::from(1);
     }
 
+    let codec = JpegToWebp;
     let jpgs: Vec<PathBuf> = match fs::read_dir(&dir) {
         Ok(rd) => rd
             .filter_map(|e| e.ok())
             .map(|e| e.path())
-            .filter(|p| {
-                p.extension()
-                    .and_then(|x| x.to_str())
-                    .map(|s| s.eq_ignore_ascii_case("jpg"))
-                    .unwrap_or(false)
-            })
+            .filter(|p| has_accepted_extension(p, codec.accepted_extensions()))
             .collect(),
         Err(e) => {
-            eprintln!("gallery-compress: cannot read {}: {}", dir.display(), e);
+            eprintln!("{BINARY_NAME}: cannot read {}: {}", dir.display(), e);
             return ExitCode::from(1);
         }
     };
 
     if jpgs.is_empty() {
-        println!("gallery-compress: no .jpg files in {}", dir.display());
+        println!("{BINARY_NAME}: no .jpg files in {}", dir.display());
         return ExitCode::from(0);
     }
 
     let n = jpgs.len();
     let results: Vec<Result<(u64, u64), String>> = jpgs
         .par_iter()
-        .map(|src| convert_one(src).map_err(|e| format!("{}: {}", src.display(), e)))
+        .map(|src| {
+            let dst = src.with_extension(codec.output_extension());
+            let report = codec
+                .convert_one(src, &dst)
+                .map_err(|e| format!("{}: {}", src.display(), e))?;
+            fs::remove_file(src).map_err(|e| e.to_string())?;
+            Ok((report.in_bytes, report.out_bytes))
+        })
         .collect();
 
     let mut count: u64 = 0;
@@ -78,14 +77,14 @@ fn main() -> ExitCode {
                 total_out += o;
             }
             Err(msg) => {
-                eprintln!("gallery-compress: {}", msg);
+                eprintln!("{BINARY_NAME}: {}", msg);
                 failed += 1;
             }
         }
     }
 
     println!(
-        "gallery-compress: {} files in {}: {} -> {}",
+        "{BINARY_NAME}: {} files in {}: {} -> {}",
         count,
         dir.display(),
         human_bytes(total_in),
@@ -100,41 +99,12 @@ fn main() -> ExitCode {
     }
 }
 
-fn convert_one(src: &Path) -> Result<(u64, u64), String> {
-    let in_size = fs::metadata(src).map_err(|e| e.to_string())?.len();
-
-    let img = ImageReader::open(src)
-        .map_err(|e| e.to_string())?
-        .with_guessed_format()
-        .map_err(|e| e.to_string())?
-        .decode()
-        .map_err(|e| e.to_string())?;
-
-    let (w, h) = (img.width(), img.height());
-    let target_w = if h >= w {
-        PORTRAIT_MAX_W
-    } else {
-        LANDSCAPE_MAX_W
+fn has_accepted_extension(p: &Path, accepted: &'static [&'static str]) -> bool {
+    let ext = match p.extension().and_then(|x| x.to_str()) {
+        Some(e) => e.to_ascii_lowercase(),
+        None => return false,
     };
-
-    let resized = if w > target_w {
-        img.resize(target_w, u32::MAX, FilterType::Lanczos3)
-    } else {
-        img
-    };
-
-    let rgb = resized.to_rgb8();
-
-    let encoder = Encoder::from_rgb(rgb.as_raw(), rgb.width(), rgb.height());
-    let memory = encoder.encode(QUALITY);
-    let webp_bytes: Vec<u8> = memory.as_ref().to_vec();
-
-    let dst = src.with_extension("webp");
-    fs::write(&dst, &webp_bytes).map_err(|e| e.to_string())?;
-
-    fs::remove_file(src).map_err(|e| e.to_string())?;
-
-    Ok((in_size, webp_bytes.len() as u64))
+    accepted.iter().any(|a| a.eq_ignore_ascii_case(&ext))
 }
 
 fn print_usage() {
