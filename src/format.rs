@@ -339,6 +339,235 @@ impl Codec for WebpToJpeg {
     }
 }
 
+/// Image format identifier used by the CLI parser (`--input-format`,
+/// `--output-format`). Maps case-insensitively to accepted extensions.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Format {
+    Jpg,
+    Png,
+    Webp,
+}
+
+impl Format {
+    /// Parse a CLI string. Returns `None` for unknown values.
+    pub fn parse(s: &str) -> Option<Self> {
+        match s.to_ascii_lowercase().as_str() {
+            "jpg" | "jpeg" => Some(Format::Jpg),
+            "png" => Some(Format::Png),
+            "webp" => Some(Format::Webp),
+            _ => None,
+        }
+    }
+}
+
+impl std::fmt::Display for Format {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        let s = match self {
+            Format::Jpg => "jpg",
+            Format::Png => "png",
+            Format::Webp => "webp",
+        };
+        f.write_str(s)
+    }
+}
+
+/// Concrete codec instance. The enum wraps the six unit-sized codec
+/// structs so the CLI can dispatch on `(input_format, output_format)`
+/// without leaning on `Box<dyn Codec>` (which is not `Sync` and
+/// therefore not `rayon`-friendly).
+#[derive(Debug, Clone, Copy)]
+pub enum CodecImpl {
+    JpegToWebp(JpegToWebp),
+    PngToWebp(PngToWebp),
+    WebpToPng(WebpToPng),
+    WebpToJpeg(WebpToJpeg),
+    JpegToPng(JpegToPng),
+    PngToJpeg(PngToJpeg),
+}
+
+impl CodecImpl {
+    pub fn accepted_extensions(&self) -> &'static [&'static str] {
+        match self {
+            CodecImpl::JpegToWebp(c) => c.accepted_extensions(),
+            CodecImpl::PngToWebp(c) => c.accepted_extensions(),
+            CodecImpl::WebpToPng(c) => c.accepted_extensions(),
+            CodecImpl::WebpToJpeg(c) => c.accepted_extensions(),
+            CodecImpl::JpegToPng(c) => c.accepted_extensions(),
+            CodecImpl::PngToJpeg(c) => c.accepted_extensions(),
+        }
+    }
+
+    pub fn output_extension(&self) -> &'static str {
+        match self {
+            CodecImpl::JpegToWebp(c) => c.output_extension(),
+            CodecImpl::PngToWebp(c) => c.output_extension(),
+            CodecImpl::WebpToPng(c) => c.output_extension(),
+            CodecImpl::WebpToJpeg(c) => c.output_extension(),
+            CodecImpl::JpegToPng(c) => c.output_extension(),
+            CodecImpl::PngToJpeg(c) => c.output_extension(),
+        }
+    }
+
+    pub fn resize_policy(&self) -> ResizePolicy {
+        match self {
+            CodecImpl::JpegToWebp(c) => c.resize_policy(),
+            CodecImpl::PngToWebp(c) => c.resize_policy(),
+            CodecImpl::WebpToPng(c) => c.resize_policy(),
+            CodecImpl::WebpToJpeg(c) => c.resize_policy(),
+            CodecImpl::JpegToPng(c) => c.resize_policy(),
+            CodecImpl::PngToJpeg(c) => c.resize_policy(),
+        }
+    }
+
+    pub fn decode(&self, src: &Path) -> Result<image::DynamicImage, CodecError> {
+        match self {
+            CodecImpl::JpegToWebp(c) => c.decode(src),
+            CodecImpl::PngToWebp(c) => c.decode(src),
+            CodecImpl::WebpToPng(c) => c.decode(src),
+            CodecImpl::WebpToJpeg(c) => c.decode(src),
+            CodecImpl::JpegToPng(c) => c.decode(src),
+            CodecImpl::PngToJpeg(c) => c.decode(src),
+        }
+    }
+
+    pub fn encode(
+        &self,
+        img: &image::DynamicImage,
+        dst: &Path,
+    ) -> Result<u64, CodecError> {
+        match self {
+            CodecImpl::JpegToWebp(c) => c.encode(img, dst),
+            CodecImpl::PngToWebp(c) => c.encode(img, dst),
+            CodecImpl::WebpToPng(c) => c.encode(img, dst),
+            CodecImpl::WebpToJpeg(c) => c.encode(img, dst),
+            CodecImpl::JpegToPng(c) => c.encode(img, dst),
+            CodecImpl::PngToJpeg(c) => c.encode(img, dst),
+        }
+    }
+
+    pub fn convert_one(
+        &self,
+        src: &Path,
+        dst: &Path,
+    ) -> Result<ConversionReport, CodecError> {
+        match self {
+            CodecImpl::JpegToWebp(c) => c.convert_one(src, dst),
+            CodecImpl::PngToWebp(c) => c.convert_one(src, dst),
+            CodecImpl::WebpToPng(c) => c.convert_one(src, dst),
+            CodecImpl::WebpToJpeg(c) => c.convert_one(src, dst),
+            CodecImpl::JpegToPng(c) => c.convert_one(src, dst),
+            CodecImpl::PngToJpeg(c) => c.convert_one(src, dst),
+        }
+    }
+}
+
+/// JPEG input -> PNG output (lossless).
+#[derive(Debug, Clone, Copy)]
+pub struct JpegToPng;
+
+impl Codec for JpegToPng {
+    fn accepted_extensions(&self) -> &'static [&'static str] {
+        &["jpg", "jpeg"]
+    }
+
+    fn output_extension(&self) -> &'static str {
+        "png"
+    }
+
+    fn resize_policy(&self) -> ResizePolicy {
+        ResizePolicy::default()
+    }
+
+    fn decode(&self, src: &Path) -> Result<image::DynamicImage, CodecError> {
+        image::ImageReader::open(src)
+            .map_err(|e| CodecError::Decode(e.to_string()))?
+            .with_guessed_format()
+            .map_err(|e| CodecError::Decode(e.to_string()))?
+            .decode()
+            .map_err(|e| CodecError::Decode(e.to_string()))
+    }
+
+    fn encode(
+        &self,
+        img: &image::DynamicImage,
+        dst: &Path,
+    ) -> Result<u64, CodecError> {
+        let rgba = img.to_rgba8();
+        let file = std::fs::File::create(dst)
+            .map_err(|e| CodecError::Io(e.to_string()))?;
+        let mut writer = std::io::BufWriter::new(file);
+        let encoder = image::codecs::png::PngEncoder::new(&mut writer);
+        use image::ImageEncoder;
+        encoder
+            .write_image(
+                rgba.as_raw(),
+                rgba.width(),
+                rgba.height(),
+                image::ExtendedColorType::Rgba8,
+            )
+            .map_err(|e| CodecError::Encode(e.to_string()))?;
+        let out_bytes = std::fs::metadata(dst)
+            .map_err(|e| CodecError::Io(e.to_string()))?
+            .len();
+        Ok(out_bytes)
+    }
+}
+
+/// PNG input -> JPEG output (lossy, quality 85).
+#[derive(Debug, Clone, Copy)]
+pub struct PngToJpeg;
+
+impl Codec for PngToJpeg {
+    fn accepted_extensions(&self) -> &'static [&'static str] {
+        &["png"]
+    }
+
+    fn output_extension(&self) -> &'static str {
+        "jpg"
+    }
+
+    fn resize_policy(&self) -> ResizePolicy {
+        ResizePolicy::default()
+    }
+
+    fn decode(&self, src: &Path) -> Result<image::DynamicImage, CodecError> {
+        image::ImageReader::open(src)
+            .map_err(|e| CodecError::Decode(e.to_string()))?
+            .with_guessed_format()
+            .map_err(|e| CodecError::Decode(e.to_string()))?
+            .decode()
+            .map_err(|e| CodecError::Decode(e.to_string()))
+    }
+
+    fn encode(
+        &self,
+        img: &image::DynamicImage,
+        dst: &Path,
+    ) -> Result<u64, CodecError> {
+        let rgb = img.to_rgb8();
+        let file = std::fs::File::create(dst)
+            .map_err(|e| CodecError::Io(e.to_string()))?;
+        let mut writer = std::io::BufWriter::new(file);
+        let encoder = image::codecs::jpeg::JpegEncoder::new_with_quality(
+            &mut writer,
+            WEBP_QUALITY as u8,
+        );
+        use image::ImageEncoder;
+        encoder
+            .write_image(
+                rgb.as_raw(),
+                rgb.width(),
+                rgb.height(),
+                image::ExtendedColorType::Rgb8,
+            )
+            .map_err(|e| CodecError::Encode(e.to_string()))?;
+        let out_bytes = std::fs::metadata(dst)
+            .map_err(|e| CodecError::Io(e.to_string()))?
+            .len();
+        Ok(out_bytes)
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
