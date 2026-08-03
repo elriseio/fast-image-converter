@@ -5,6 +5,8 @@ edition = "2021"
 description = "Batch image-format converter between jpg, png, and webp with portrait/landscape size policy."
 license = "MIT"
 
+default-run = "convert-to-webp"
+
 [[bin]]
 name = "convert-to-webp"
 path = "src/main.rs"
