@@ -216,7 +216,7 @@ fn has_accepted_extension(p: &Path, accepted: &'static [&'static str]) -> bool {
 
 fn print_usage() {
     eprintln!(
-        "Usage: gallery-compress <dir> [--input-format <fmt>] [--output-format <fmt>]\n\
+        "Usage: convert-to-webp <dir> [--input-format <fmt>] [--output-format <fmt>]\n\
          \n\
          Arguments:\n\
          \x20 <dir>                  directory containing the input images\n\
@@ -227,10 +227,10 @@ fn print_usage() {
          \x20 -h, --help             show this help\n\
          \n\
          Examples:\n\
-         \x20 gallery-compress /tmp/my-images\n\
-         \x20 gallery-compress /tmp/my-images --input-format png --output-format webp\n\
-         \x20 gallery-compress /tmp/my-images --input-format webp --output-format png\n\
-         \x20 gallery-compress /tmp/my-images --input-format webp --output-format jpg\n\
+         \x20 convert-to-webp /tmp/my-images\n\
+         \x20 convert-to-webp /tmp/my-images --input-format png --output-format webp\n\
+         \x20 convert-to-webp /tmp/my-images --input-format webp --output-format png\n\
+         \x20 convert-to-webp /tmp/my-images --input-format webp --output-format jpg\n\
          \n\
          Env:\n\
          \x20 GALLERY_BASE  default: {DEFAULT_GALLERY_BASE}"
