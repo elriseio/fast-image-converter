@@ -11,7 +11,7 @@ use format::{
     WebpToJpeg, WebpToPng,
 };
 
-const BINARY_NAME: &str = "gallery-compress";
+const BINARY_NAME: &str = "convert-to-webp";
 const DEFAULT_GALLERY_BASE: &str =
     "/home/alex/Er/VFSite/vfatina-home/public/images/gallery";
 

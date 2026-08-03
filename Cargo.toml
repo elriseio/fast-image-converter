@@ -1,13 +1,17 @@
 [package]
-name = "gallery-compress"
+name = "convert-to-webp"
 version = "0.2.0"
 edition = "2021"
-description = "Batch JPG -> WebP converter with portrait/landscape size policy."
+description = "Batch image-format converter between jpg, png, and webp with portrait/landscape size policy."
 license = "MIT"
 
 [[bin]]
-name = "gallery-compress"
+name = "convert-to-webp"
 path = "src/main.rs"
+
+[[bin]]
+name = "gallery-compress"
+path = "src/bin/gallery-compress.rs"
 
 [profile.release]
 opt-level = 3

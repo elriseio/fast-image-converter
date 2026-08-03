@@ -30,7 +30,7 @@ fn fixtures() -> PathBuf {
 }
 
 fn binary() -> &'static str {
-    env!("CARGO_BIN_EXE_gallery-compress")
+    env!("CARGO_BIN_EXE_convert-to-webp")
 }
 
 fn make_run_dir(label: &str) -> PathBuf {
