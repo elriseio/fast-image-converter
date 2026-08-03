@@ -6,6 +6,7 @@ use std::path::Path;
 /// The v0 baseline is `PortraitLandscape { portrait: 800, landscape: 1000 }`
 /// (see `docs/adr/0002-preserve-jpg-to-webp-baseline.md`).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[allow(dead_code)] // MaxWidth is reserved for Wave 3 (--resize flag per ADR-0001).
 pub enum ResizePolicy {
     None,
     MaxWidth(u32),
@@ -405,43 +406,6 @@ impl CodecImpl {
             CodecImpl::WebpToJpeg(c) => c.output_extension(),
             CodecImpl::JpegToPng(c) => c.output_extension(),
             CodecImpl::PngToJpeg(c) => c.output_extension(),
-        }
-    }
-
-    pub fn resize_policy(&self) -> ResizePolicy {
-        match self {
-            CodecImpl::JpegToWebp(c) => c.resize_policy(),
-            CodecImpl::PngToWebp(c) => c.resize_policy(),
-            CodecImpl::WebpToPng(c) => c.resize_policy(),
-            CodecImpl::WebpToJpeg(c) => c.resize_policy(),
-            CodecImpl::JpegToPng(c) => c.resize_policy(),
-            CodecImpl::PngToJpeg(c) => c.resize_policy(),
-        }
-    }
-
-    pub fn decode(&self, src: &Path) -> Result<image::DynamicImage, CodecError> {
-        match self {
-            CodecImpl::JpegToWebp(c) => c.decode(src),
-            CodecImpl::PngToWebp(c) => c.decode(src),
-            CodecImpl::WebpToPng(c) => c.decode(src),
-            CodecImpl::WebpToJpeg(c) => c.decode(src),
-            CodecImpl::JpegToPng(c) => c.decode(src),
-            CodecImpl::PngToJpeg(c) => c.decode(src),
-        }
-    }
-
-    pub fn encode(
-        &self,
-        img: &image::DynamicImage,
-        dst: &Path,
-    ) -> Result<u64, CodecError> {
-        match self {
-            CodecImpl::JpegToWebp(c) => c.encode(img, dst),
-            CodecImpl::PngToWebp(c) => c.encode(img, dst),
-            CodecImpl::WebpToPng(c) => c.encode(img, dst),
-            CodecImpl::WebpToJpeg(c) => c.encode(img, dst),
-            CodecImpl::JpegToPng(c) => c.encode(img, dst),
-            CodecImpl::PngToJpeg(c) => c.encode(img, dst),
         }
     }
 

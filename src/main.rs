@@ -7,8 +7,8 @@ use rayon::prelude::*;
 
 mod format;
 use format::{
-    Codec, CodecImpl, Format, JpegToPng, JpegToWebp, PngToJpeg, PngToWebp,
-    WebpToJpeg, WebpToPng,
+    CodecImpl, Format, JpegToPng, JpegToWebp, PngToJpeg, PngToWebp, WebpToJpeg,
+    WebpToPng,
 };
 
 const BINARY_NAME: &str = "convert-to-webp";
