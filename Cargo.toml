@@ -15,6 +15,11 @@ lto = "thin"
 codegen-units = 1
 
 [dependencies]
+# The `image` crate's `webp` feature enables the WebP DECODER (read
+# .webp into DynamicImage). The separate `webp` crate below is the
+# ENCODER-ONLY binding to libwebp for emitting WebP. The two are
+# architecturally distinct: `image::codecs::webp` covers decode,
+# `webp::Encoder` covers encode.
 image = { version = "0.25", default-features = false, features = ["jpeg", "png", "webp"] }
 rayon = "1.10"
 webp = "0.3"
