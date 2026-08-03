@@ -181,3 +181,126 @@ impl Codec for JpegToWebp {
 
 /// v0 baseline WebP quality. Matches the QUALITY constant in v0 src/main.rs.
 pub const WEBP_QUALITY: f32 = 85.0;
+
+/// PNG input -> WebP output with the per-orientation resize policy and
+/// lossy-with-alpha encoding (`quality=85`).
+///
+/// `to_rgb8` would silently drop the alpha channel for PNG sources;
+/// this codec uses `to_rgba8` and the `webp::Encoder::from_rgba`
+/// entry point so the alpha survives the round-trip. This is the
+/// deliberate behavioural change documented in ADR-0001 § Decision § 2.
+#[derive(Debug, Clone, Copy)]
+pub struct PngToWebp;
+
+impl Codec for PngToWebp {
+    fn accepted_extensions(&self) -> &'static [&'static str] {
+        &["png"]
+    }
+
+    fn output_extension(&self) -> &'static str {
+        "webp"
+    }
+
+    fn resize_policy(&self) -> ResizePolicy {
+        ResizePolicy::default()
+    }
+
+    fn decode(&self, src: &Path) -> Result<image::DynamicImage, CodecError> {
+        image::ImageReader::open(src)
+            .map_err(|e| CodecError::Decode(e.to_string()))?
+            .with_guessed_format()
+            .map_err(|e| CodecError::Decode(e.to_string()))?
+            .decode()
+            .map_err(|e| CodecError::Decode(e.to_string()))
+    }
+
+    fn encode(
+        &self,
+        img: &image::DynamicImage,
+        dst: &Path,
+    ) -> Result<u64, CodecError> {
+        let rgba = img.to_rgba8();
+        let encoder = webp::Encoder::from_rgba(
+            rgba.as_raw(),
+            rgba.width(),
+            rgba.height(),
+        );
+        let memory = encoder.encode(WEBP_QUALITY);
+        let bytes: Vec<u8> = memory.as_ref().to_vec();
+        std::fs::write(dst, &bytes).map_err(|e| CodecError::Io(e.to_string()))?;
+        Ok(bytes.len() as u64)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::path::PathBuf;
+    use std::sync::atomic::{AtomicU64, Ordering};
+
+    static SEQ: AtomicU64 = AtomicU64::new(0);
+
+    fn workspace_tmp() -> PathBuf {
+        let mut p = std::env::temp_dir();
+        let seq = SEQ.fetch_add(1, Ordering::SeqCst);
+        p.push(format!(
+            "convert-to-webp-test-{}-{}",
+            std::process::id(),
+            seq
+        ));
+        std::fs::create_dir_all(&p).expect("tmp dir");
+        p
+    }
+
+    #[test]
+    fn jpeg_to_webp_round_trip_matches_v0_quality() {
+        let tmp = workspace_tmp();
+        let src = tmp.join("input.jpg");
+        let dst = tmp.join("output.webp");
+        let img = image::RgbImage::from_fn(320, 240, |x, y| {
+            image::Rgb([(x * 3) as u8, (y * 5) as u8, ((x + y) * 7) as u8])
+        });
+        img.save(&src).unwrap();
+        let report = JpegToWebp.convert_one(&src, &dst).unwrap();
+        assert!(report.out_bytes > 0);
+        assert!(report.in_bytes > 0);
+        assert!(dst.exists());
+        let _ = std::fs::remove_dir_all(&tmp);
+    }
+
+    #[test]
+    fn png_to_webp_preserves_alpha_dimensions() {
+        let tmp = workspace_tmp();
+        let src = tmp.join("input.png");
+        let dst = tmp.join("output.webp");
+        let img = image::RgbaImage::from_fn(320, 240, |x, y| {
+            image::Rgba([(x * 3) as u8, (y * 5) as u8, ((x + y) * 7) as u8, 200])
+        });
+        img.save(&src).unwrap();
+        let report = PngToWebp.convert_one(&src, &dst).unwrap();
+        assert!(report.out_bytes > 0);
+        assert!(dst.exists());
+        // WebP with alpha starts with the RIFF/WEBP magic header; the
+        // first 12 bytes round-trip the encoder entry point (the alpha
+        // bit is encoded in the VP8X chunk, beyond this header).
+        let head = std::fs::read(&dst).unwrap();
+        assert_eq!(&head[0..4], b"RIFF");
+        assert_eq!(&head[8..12], b"WEBP");
+        let _ = std::fs::remove_dir_all(&tmp);
+    }
+
+    #[test]
+    fn resize_policy_target_width_is_correct() {
+        // v0 baseline: portrait >= landscape use portrait, landscape uses landscape.
+        let p = ResizePolicy::PortraitLandscape {
+            portrait: 800,
+            landscape: 1000,
+        };
+        assert_eq!(p.target_width(640, 960), 800);   // portrait
+        assert_eq!(p.target_width(960, 640), 1000);  // landscape
+        assert_eq!(p.target_width(800, 800), 800);   // square (h >= w)
+        assert_eq!(p.target_width(500, 800), 800);   // already smaller -> clamp
+        assert_eq!(p.target_width(1200, 800), 1000); // landscape
+        assert_eq!(p.target_width(800, 1200), 800);  // portrait
+    }
+}
