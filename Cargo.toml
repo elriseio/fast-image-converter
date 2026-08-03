@@ -1,0 +1,20 @@
+[package]
+name = "gallery-compress"
+version = "0.2.0"
+edition = "2021"
+description = "Batch JPG -> WebP converter with portrait/landscape size policy."
+license = "MIT"
+
+[[bin]]
+name = "gallery-compress"
+path = "src/main.rs"
+
+[profile.release]
+opt-level = 3
+lto = "thin"
+codegen-units = 1
+
+[dependencies]
+image = { version = "0.25", default-features = false, features = ["jpeg"] }
+rayon = "1.10"
+webp = "0.3"

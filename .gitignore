@@ -1,0 +1,15 @@
+# editor / OS
+.DS_Store
+*.swp
+*~
+*.bak
+# local runs / scratch
+*.log
+.tmp/
+# Rust
+/target/
+Cargo.lock.bak
+.symposium/
+Makefile.agent
+memory.json
+Makefile
