@@ -8,6 +8,8 @@ use image::ImageReader;
 use rayon::prelude::*;
 use webp::Encoder;
 
+mod format;
+
 const QUALITY: f32 = 85.0;
 const PORTRAIT_MAX_W: u32 = 800;
 const LANDSCAPE_MAX_W: u32 = 1000;
