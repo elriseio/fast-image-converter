@@ -65,12 +65,7 @@ fn spawn_with_report_fd(
     args: &[&str],
     stdin: Option<&[u8]>,
     report_fd: i32,
-) -> (
-    std::process::ExitStatus,
-    Vec<u8>,
-    Vec<u8>,
-    Option<String>,
-) {
+) -> (std::process::ExitStatus, Vec<u8>, Vec<u8>, Option<String>) {
     let (read_fd, write_fd) = nix_pipe().expect("create pipe");
     let mut cmd = Command::new(binary());
     cmd.args(args);
@@ -201,7 +196,11 @@ fn single_file_json_emits_one_parseable_line_on_stderr() {
     // stderr is one JSON line + a trailing newline.
     let stderr_s = String::from_utf8_lossy(&stderr);
     let lines: Vec<&str> = stderr_s.lines().collect();
-    assert_eq!(lines.len(), 1, "stderr must be one JSON line; got: {lines:?}");
+    assert_eq!(
+        lines.len(),
+        1,
+        "stderr must be one JSON line; got: {lines:?}"
+    );
 
     let v = parse_record(lines[0]).expect("stderr line parses as JSON");
     // AC-6: schema_version is 1.
@@ -235,13 +234,16 @@ fn single_file_json_success_emits_all_documented_fields() {
         Some(&input),
     );
     assert!(status.success());
-    let v = parse_record(&String::from_utf8_lossy(&stderr))
-        .expect("one parseable JSON line on stderr");
+    let v =
+        parse_record(&String::from_utf8_lossy(&stderr)).expect("one parseable JSON line on stderr");
 
     // Top-level scalars / strings.
     assert_string_field(&v, "mode", "single_file");
     assert_string_field(&v, "status", "ok");
-    assert!(v.get("error").unwrap().is_null(), "error must be null on success");
+    assert!(
+        v.get("error").unwrap().is_null(),
+        "error must be null on success"
+    );
 
     // input.{format,bytes,width,height}.
     let input_obj = v.get("input").expect("input");
@@ -270,7 +272,10 @@ fn single_file_json_success_emits_all_documented_fields() {
 
     // host.{libwebp_version,build_commit_sha}.
     let host = v.get("host").expect("host");
-    let libwebp_version = host.get("libwebp_version").and_then(|x| x.as_str()).unwrap();
+    let libwebp_version = host
+        .get("libwebp_version")
+        .and_then(|x| x.as_str())
+        .unwrap();
     assert!(
         !libwebp_version.is_empty(),
         "libwebp_version is the empty string: {host}"
@@ -299,13 +304,17 @@ fn single_file_json_decode_failure_emits_status_err_and_error_block() {
     );
     assert_eq!(status.code(), Some(1), "decode failure must exit 1");
     assert!(stdout.is_empty(), "stdout must be empty on decode failure");
-    let v = parse_record(&String::from_utf8_lossy(&stderr))
-        .expect("one parseable JSON line on stderr");
+    let v =
+        parse_record(&String::from_utf8_lossy(&stderr)).expect("one parseable JSON line on stderr");
 
     assert_string_field(&v, "mode", "single_file");
     assert_string_field(&v, "status", "err");
 
-    let err = v.get("error").expect("error block").as_object().expect("error object");
+    let err = v
+        .get("error")
+        .expect("error block")
+        .as_object()
+        .expect("error object");
     let kind = err.get("kind").and_then(|x| x.as_str()).unwrap();
     assert!(
         kind == "decode" || kind == "encode" || kind == "io",
@@ -315,7 +324,10 @@ fn single_file_json_decode_failure_emits_status_err_and_error_block() {
     assert!(!msg.is_empty(), "error.message is empty");
 
     // output is present but zeroed (null) where not meaningful.
-    assert!(v.get("output").unwrap().is_null(), "output must be null on failure");
+    assert!(
+        v.get("output").unwrap().is_null(),
+        "output must be null on failure"
+    );
 }
 
 // --- AC-5: batch mode ---
@@ -397,9 +409,12 @@ fn batch_json_without_input_dir_exits_nonzero_with_error_block() {
         "convert-to-webp-no-such-dir-{}",
         std::process::id()
     ));
-    let (status, _stdout, stderr) =
-        spawn(&[bogus.to_str().unwrap(), "--json"], None);
-    assert_eq!(status.code(), Some(1), "missing dir must exit 1; got {status:?}");
+    let (status, _stdout, stderr) = spawn(&[bogus.to_str().unwrap(), "--json"], None);
+    assert_eq!(
+        status.code(),
+        Some(1),
+        "missing dir must exit 1; got {status:?}"
+    );
     let stderr_s = String::from_utf8_lossy(&stderr);
     assert!(
         stderr_s.contains("not a directory"),
@@ -435,7 +450,10 @@ fn single_file_without_json_emits_v0_key_value_line() {
     assert!(line.contains(" in_bytes="), "v0 shape: {line}");
     assert!(line.contains(" out_bytes="), "v0 shape: {line}");
     assert!(line.contains(" duration_ms="), "v0 shape: {line}");
-    assert!(!line.contains("error="), "success path omits error=: {line}");
+    assert!(
+        !line.contains("error="),
+        "success path omits error=: {line}"
+    );
 }
 
 #[test]
@@ -489,8 +507,7 @@ fn report_fd_three_streams_to_a_writable_pipe() {
     );
     assert!(status.success(), "exit {status:?}; stderr: {stderr:?}");
     let report = report.expect("pipe read returned some data");
-    let v = parse_record(report.trim())
-        .expect("pipe carries one parseable JSON line");
+    let v = parse_record(report.trim()).expect("pipe carries one parseable JSON line");
     assert_string_field(&v, "status", "ok");
 
     // stderr is empty (report was diverted).

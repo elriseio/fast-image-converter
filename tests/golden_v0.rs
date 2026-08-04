@@ -178,8 +178,7 @@ fn default_pipeline_exits_zero_on_golden_batch() {
         "default pipeline must exit 0; got {status:?}\nstdout: {stdout}\nstderr: {stderr}"
     );
     assert!(
-        stdout.contains("convert-to-webp:")
-            || stdout.contains("gallery-compress:"),
+        stdout.contains("convert-to-webp:") || stdout.contains("gallery-compress:"),
         "summary line missing the binary name prefix: {stdout}"
     );
 }
@@ -306,10 +305,12 @@ fn libwebp_version_string() -> String {
     // marker (see `RUNBOOK.md` § 2.1). We tolerate the command
     // being unavailable: an empty string is reported in that case
     // so the failure message still surfaces the comparison result.
-    match Command::new("pkg-config").arg("--modversion").arg("libwebp").output() {
-        Ok(out) if out.status.success() => {
-            String::from_utf8_lossy(&out.stdout).trim().to_string()
-        }
+    match Command::new("pkg-config")
+        .arg("--modversion")
+        .arg("libwebp")
+        .output()
+    {
+        Ok(out) if out.status.success() => String::from_utf8_lossy(&out.stdout).trim().to_string(),
         _ => String::new(),
     }
 }

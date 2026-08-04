@@ -110,7 +110,13 @@ fn single_file_png_input_round_trip() {
     img.save(&tmp).expect("write temp png");
     let input = fs::read(&tmp).expect("read temp png");
     let (status, stdout, stderr) = run_single_file(
-        &["--single-file", "--input-format", "png", "--output-format", "webp"],
+        &[
+            "--single-file",
+            "--input-format",
+            "png",
+            "--output-format",
+            "webp",
+        ],
         &input,
     );
     let _ = fs::remove_file(&tmp);
@@ -128,7 +134,13 @@ fn single_file_webp_to_png_round_trip() {
     // DE-004 AC-3: WebP -> PNG via stdin/stdout.
     let webp = fs::read(expected_dir().join("portrait_256x384.webp")).unwrap();
     let (status, stdout, stderr) = run_single_file(
-        &["--single-file", "--input-format", "webp", "--output-format", "png"],
+        &[
+            "--single-file",
+            "--input-format",
+            "webp",
+            "--output-format",
+            "png",
+        ],
         &webp,
     );
     assert!(
@@ -195,7 +207,8 @@ fn single_file_resize_cap_is_honoured() {
     // existing fixture (which is 384 wide, so it stays native).
     let src = fixtures().join("portrait_256x384.jpg");
     let input = fs::read(&src).unwrap();
-    let (status, stdout, stderr) = run_single_file(&["--single-file", "--resize", "cap=512"], &input);
+    let (status, stdout, stderr) =
+        run_single_file(&["--single-file", "--resize", "cap=512"], &input);
     assert!(status.success(), "got {status:?}\nstderr: {stderr}");
     let dims = webp_pixel_dims(&stdout);
     assert!(

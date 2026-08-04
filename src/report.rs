@@ -268,8 +268,7 @@ fn write_json_string(out: &mut String, s: &str) {
             c if (c as u32) < 0x20 => {
                 // Unreachable for our inputs (we never embed
                 // binary in the report), but kept defensively.
-                write!(out, "\\u{:04x}", c as u32)
-                    .expect("writing to String is infallible");
+                write!(out, "\\u{:04x}", c as u32).expect("writing to String is infallible");
             }
             c => out.push(c),
         }

@@ -11,8 +11,7 @@ mod format;
 mod params;
 mod report;
 use format::{
-    CodecImpl, Format, JpegToPng, JpegToWebp, PngToJpeg, PngToWebp, WebpToJpeg,
-    WebpToPng,
+    CodecImpl, Format, JpegToPng, JpegToWebp, PngToJpeg, PngToWebp, WebpToJpeg, WebpToPng,
 };
 use params::parse_resize;
 
@@ -59,10 +58,24 @@ struct Cli {
     report_fd: i32,
 }
 
+/// Bounded context shared by every per-file report emitter. Bundles
+/// the fields that are identical across the success and failure
+/// paths (CLI flags, formats, params, wall-time) so the emitter
+/// signatures stay below clippy's seven-argument limit (AR-004
+/// AC-3). The struct is `Copy`-friendly because every field is
+/// small and trivially cloneable; callers that already hold `&Cli`
+/// pass a single reference instead of four loose parameters.
+#[derive(Copy, Clone)]
+struct ReportContext<'a> {
+    cli: &'a Cli,
+    input_format: Format,
+    output_format: Format,
+    params: &'a crate::params::Params,
+    duration_ms: u64,
+}
+
 fn parse_quality(s: &str) -> Result<u8, String> {
-    let n: i64 = s
-        .parse()
-        .map_err(|_| format!("not an integer: {s}"))?;
+    let n: i64 = s.parse().map_err(|_| format!("not an integer: {s}"))?;
     if !(1..=100).contains(&n) {
         return Err(format!("{n} out of range 1..100"));
     }
@@ -86,16 +99,14 @@ fn parse_cli(args: &[String]) -> Result<Cli, CliError> {
         match arg.as_str() {
             "--input-format" => {
                 let v = args.get(i + 1).ok_or(CliError::Usage)?;
-                input_format = Some(Format::parse(v).ok_or_else(|| {
-                    CliError::BadInputFormat((*v).clone())
-                })?);
+                input_format =
+                    Some(Format::parse(v).ok_or_else(|| CliError::BadInputFormat((*v).clone()))?);
                 i += 2;
             }
             "--output-format" => {
                 let v = args.get(i + 1).ok_or(CliError::Usage)?;
-                output_format = Some(Format::parse(v).ok_or_else(|| {
-                    CliError::BadOutputFormat((*v).clone())
-                })?);
+                output_format =
+                    Some(Format::parse(v).ok_or_else(|| CliError::BadOutputFormat((*v).clone()))?);
                 i += 2;
             }
             "--quality" => {
@@ -122,9 +133,9 @@ fn parse_cli(args: &[String]) -> Result<Cli, CliError> {
             }
             "--report-fd" => {
                 let v = args.get(i + 1).ok_or(CliError::Usage)?;
-                let n: i64 = v.parse().map_err(|_| {
-                    CliError::BadReportFd(format!("{v:?}: not an integer"))
-                })?;
+                let n: i64 = v
+                    .parse()
+                    .map_err(|_| CliError::BadReportFd(format!("{v:?}: not an integer")))?;
                 if n < 0 || n > i32::MAX as i64 {
                     return Err(CliError::BadReportFd(format!(
                         "{v:?}: out of range 0..{}",
@@ -263,9 +274,7 @@ fn main() -> ExitCode {
         (Format::Webp, Format::Jpg) => CodecImpl::WebpToJpeg(WebpToJpeg),
         (Format::Jpg, Format::Png) => CodecImpl::JpegToPng(JpegToPng),
         (Format::Png, Format::Jpg) => CodecImpl::PngToJpeg(PngToJpeg),
-        (Format::Jpg, Format::Jpg)
-        | (Format::Png, Format::Png)
-        | (Format::Webp, Format::Webp) => {
+        (Format::Jpg, Format::Jpg) | (Format::Png, Format::Png) | (Format::Webp, Format::Webp) => {
             eprintln!(
                 "{BINARY_NAME}: same input/output format ({input_format:?}) \
                  is a no-op; refusing to overwrite the source."
@@ -288,10 +297,7 @@ fn main() -> ExitCode {
         Ok(rd) => rd
             .filter_map(|e| e.ok())
             .map(|e| e.path())
-            .filter(|p| {
-                p.is_file()
-                    && has_accepted_extension(p, codec.accepted_extensions())
-            })
+            .filter(|p| p.is_file() && has_accepted_extension(p, codec.accepted_extensions()))
             .collect(),
         Err(e) => {
             eprintln!("{BINARY_NAME}: cannot read {}: {}", dir.display(), e);
@@ -314,6 +320,18 @@ fn main() -> ExitCode {
     let total_out = AtomicU64::new(0);
     let failed = AtomicU64::new(0);
 
+    // Bounded report context template (AR-004 AC-3). The closure
+    // re-derives a per-candidate ctx because `duration_ms` varies
+    // per file; everything else is captured from the surrounding
+    // scope.
+    let ctx_template = ReportContext {
+        cli: &cli,
+        input_format,
+        output_format,
+        params: &params,
+        duration_ms: 0,
+    };
+
     candidates.par_iter().for_each(|src| {
         let started = Instant::now();
         let dst = src.with_extension(codec.output_extension());
@@ -330,6 +348,10 @@ fn main() -> ExitCode {
         // finishes; eprintln! acquires the stderr lock per call so
         // the JSON lines do not interleave even though rayon runs
         // the closure concurrently.
+        let ctx = ReportContext {
+            duration_ms,
+            ..ctx_template
+        };
         match conv {
             Ok(report) => {
                 if !params.keep_source {
@@ -342,20 +364,13 @@ fn main() -> ExitCode {
                         failed.fetch_add(1, Ordering::Relaxed);
                         if cli.json {
                             emit_batch_record_io_failure(
-                                &cli,
-                                input_format,
-                                output_format,
-                                &params,
+                                &ctx,
                                 src,
                                 &report,
                                 &format!("cannot delete source: {e}"),
-                                duration_ms,
                             );
                         } else {
-                            eprintln!(
-                                "{BINARY_NAME}: cannot delete {}: {e}",
-                                src.display()
-                            );
+                            eprintln!("{BINARY_NAME}: cannot delete {}: {e}", src.display());
                         }
                         return;
                     }
@@ -364,15 +379,7 @@ fn main() -> ExitCode {
                 total_in.fetch_add(bytes_in, Ordering::Relaxed);
                 total_out.fetch_add(bytes_out, Ordering::Relaxed);
                 if cli.json {
-                    emit_batch_record_success(
-                        &cli,
-                        input_format,
-                        output_format,
-                        &params,
-                        src,
-                        &report,
-                        duration_ms,
-                    );
+                    emit_batch_record_success(&ctx, src, &report);
                 }
             }
             Err(e) => {
@@ -380,17 +387,7 @@ fn main() -> ExitCode {
                 let kind = codec_error_kind(&e);
                 let raw = codec_error_inner_message(&e);
                 if cli.json {
-                    emit_batch_record_failure(
-                        &cli,
-                        input_format,
-                        output_format,
-                        &params,
-                        src,
-                        bytes_in,
-                        kind,
-                        raw,
-                        duration_ms,
-                    );
+                    emit_batch_record_failure(&ctx, src, bytes_in, kind, raw);
                 } else {
                     eprintln!("{BINARY_NAME}: {}: {}", src.display(), e);
                 }
@@ -448,22 +445,23 @@ fn run_single_file(cli: &Cli) -> ExitCode {
         (Format::Webp, Format::Jpg) => CodecImpl::WebpToJpeg(WebpToJpeg),
         (Format::Jpg, Format::Png) => CodecImpl::JpegToPng(JpegToPng),
         (Format::Png, Format::Jpg) => CodecImpl::PngToJpeg(PngToJpeg),
-        (Format::Jpg, Format::Jpg)
-        | (Format::Png, Format::Png)
-        | (Format::Webp, Format::Webp) => {
+        (Format::Jpg, Format::Jpg) | (Format::Png, Format::Png) | (Format::Webp, Format::Webp) => {
             let params = crate::params::Params::default();
-            emit_single_file_failure_report(
+            let ctx = ReportContext {
                 cli,
                 input_format,
                 output_format,
-                &params,
+                params: &params,
+                duration_ms: 0,
+            };
+            emit_single_file_failure_report(
+                &ctx,
                 0,
                 None,
                 0,
                 None,
                 crate::report::ErrorKind::Io,
                 "same input/output format is a no-op",
-                0,
             );
             return ExitCode::from(2);
         }
@@ -482,18 +480,21 @@ fn run_single_file(cli: &Cli) -> ExitCode {
     let started = Instant::now();
     let mut in_bytes_buf = Vec::new();
     if let Err(e) = std::io::stdin().read_to_end(&mut in_bytes_buf) {
-        emit_single_file_failure_report(
+        let ctx = ReportContext {
             cli,
             input_format,
             output_format,
-            &params,
+            params: &params,
+            duration_ms: started.elapsed().as_millis() as u64,
+        };
+        emit_single_file_failure_report(
+            &ctx,
             0,
             None,
             0,
             None,
             crate::report::ErrorKind::Io,
             &format!("cannot read stdin: {e}"),
-            started.elapsed().as_millis() as u64,
         );
         return ExitCode::from(1);
     }
@@ -502,18 +503,21 @@ fn run_single_file(cli: &Cli) -> ExitCode {
         Ok(img) => img,
         Err(e) => {
             let raw = codec_error_inner_message(&e);
-            emit_single_file_failure_report(
+            let ctx = ReportContext {
                 cli,
                 input_format,
                 output_format,
-                &params,
+                params: &params,
+                duration_ms: started.elapsed().as_millis() as u64,
+            };
+            emit_single_file_failure_report(
+                &ctx,
                 in_bytes_buf.len() as u64,
                 None,
                 0,
                 None,
                 crate::report::ErrorKind::Decode,
                 raw,
-                started.elapsed().as_millis() as u64,
             );
             return ExitCode::from(1);
         }
@@ -525,18 +529,21 @@ fn run_single_file(cli: &Cli) -> ExitCode {
         Ok(b) => b,
         Err(e) => {
             let raw = codec_error_inner_message(&e);
-            emit_single_file_failure_report(
+            let ctx = ReportContext {
                 cli,
                 input_format,
                 output_format,
-                &params,
+                params: &params,
+                duration_ms: started.elapsed().as_millis() as u64,
+            };
+            emit_single_file_failure_report(
+                &ctx,
                 in_bytes_buf.len() as u64,
                 Some((img.width(), img.height())),
                 0,
                 None,
                 crate::report::ErrorKind::Encode,
                 raw,
-                started.elapsed().as_millis() as u64,
             );
             return ExitCode::from(1);
         }
@@ -545,48 +552,57 @@ fn run_single_file(cli: &Cli) -> ExitCode {
     let stdout = std::io::stdout();
     let mut out = stdout.lock();
     if let Err(e) = out.write_all(&encoded) {
-        emit_single_file_failure_report(
+        let ctx = ReportContext {
             cli,
             input_format,
             output_format,
-            &params,
+            params: &params,
+            duration_ms: started.elapsed().as_millis() as u64,
+        };
+        emit_single_file_failure_report(
+            &ctx,
             in_bytes_buf.len() as u64,
             Some((img.width(), img.height())),
             0,
             None,
             crate::report::ErrorKind::Io,
             &format!("cannot write stdout: {e}"),
-            started.elapsed().as_millis() as u64,
         );
         return ExitCode::from(1);
     }
     if let Err(e) = out.flush() {
-        emit_single_file_failure_report(
+        let ctx = ReportContext {
             cli,
             input_format,
             output_format,
-            &params,
+            params: &params,
+            duration_ms: started.elapsed().as_millis() as u64,
+        };
+        emit_single_file_failure_report(
+            &ctx,
             in_bytes_buf.len() as u64,
             Some((img.width(), img.height())),
             encoded.len() as u64,
             Some((resized.width(), resized.height())),
             crate::report::ErrorKind::Io,
             &format!("cannot flush stdout: {e}"),
-            started.elapsed().as_millis() as u64,
         );
         return ExitCode::from(1);
     }
 
-    emit_single_file_success_report(
+    let ctx = ReportContext {
         cli,
         input_format,
         output_format,
-        &params,
+        params: &params,
+        duration_ms: started.elapsed().as_millis() as u64,
+    };
+    emit_single_file_success_report(
+        &ctx,
         in_bytes_buf.len() as u64,
         (img.width(), img.height()),
         encoded.len() as u64,
         (resized.width(), resized.height()),
-        started.elapsed().as_millis() as u64,
     );
     ExitCode::from(0)
 }
@@ -626,60 +642,49 @@ fn emit_single_file_metadata(
 /// `emit_single_file_metadata` directly; they are migrated to a
 /// JSON-capable dispatcher in commit 3 (per DE-005 § 4).
 fn emit_single_file_success_report(
-    cli: &Cli,
-    input_format: Format,
-    output_format: Format,
-    params: &crate::params::Params,
+    ctx: &ReportContext,
     in_bytes: u64,
     input_dims: (u32, u32),
     out_bytes: u64,
     output_dims: (u32, u32),
-    duration_ms: u64,
 ) {
-    if !cli.json {
-        if cli.report_fd == 2 {
-            emit_single_file_metadata(
-                "ok",
-                in_bytes,
-                out_bytes,
-                duration_ms,
-                None,
-            );
+    if !ctx.cli.json {
+        if ctx.cli.report_fd == 2 {
+            emit_single_file_metadata("ok", in_bytes, out_bytes, ctx.duration_ms, None);
         } else {
             let line = format!(
-                "status=ok in_bytes={in_bytes} out_bytes={out_bytes} duration_ms={duration_ms}"
+                "status=ok in_bytes={in_bytes} out_bytes={out_bytes} duration_ms={}",
+                ctx.duration_ms
             );
-            emit_report_line(cli.report_fd, &line);
+            emit_report_line(ctx.cli.report_fd, &line);
         }
         return;
     }
-    use crate::report::{
-        CodecMeta, ImageFormat, ImageInfo, Mode, Report, Status,
-    };
+    use crate::report::{CodecMeta, ImageFormat, ImageInfo, Mode, Report, Status};
     let report = Report {
         mode: Mode::SingleFile,
         status: Status::Ok,
         input: Some(ImageInfo {
-            format: ImageFormat::from(input_format),
+            format: ImageFormat::from(ctx.input_format),
             bytes: in_bytes,
             width: Some(input_dims.0),
             height: Some(input_dims.1),
         }),
         output: Some(ImageInfo {
-            format: ImageFormat::from(output_format),
+            format: ImageFormat::from(ctx.output_format),
             bytes: out_bytes,
             width: Some(output_dims.0),
             height: Some(output_dims.1),
         }),
         codec: CodecMeta {
-            quality: params.quality,
-            resize_policy: resize_policy_to_string(params.resize),
+            quality: ctx.params.quality,
+            resize_policy: resize_policy_to_string(ctx.params.resize),
         },
         host: host_meta(),
-        duration_ms,
+        duration_ms: ctx.duration_ms,
         error: None,
     };
-    emit_report_line(cli.report_fd, &report.to_json());
+    emit_report_line(ctx.cli.report_fd, &report.to_json());
 }
 
 /// Emit a failure-path single-file report on stderr. When `--json`
@@ -695,48 +700,37 @@ fn emit_single_file_success_report(
 /// in the JSON record (per AC-4: "output fields are present but
 /// zeroed where not meaningful").
 fn emit_single_file_failure_report(
-    cli: &Cli,
-    input_format: Format,
-    output_format: Format,
-    params: &crate::params::Params,
+    ctx: &ReportContext,
     in_bytes: u64,
     input_dims: Option<(u32, u32)>,
     out_bytes: u64,
     output_dims: Option<(u32, u32)>,
     error_kind: crate::report::ErrorKind,
     error_msg: &str,
-    duration_ms: u64,
 ) {
-    if !cli.json {
+    if !ctx.cli.json {
         let kind_str = match error_kind {
             crate::report::ErrorKind::Decode => "decode error",
             crate::report::ErrorKind::Encode => "encode error",
             crate::report::ErrorKind::Io => "io error",
         };
         let full_msg = format!("{kind_str}: {error_msg}");
-        if cli.report_fd == 2 {
-            emit_single_file_metadata(
-                "err",
-                in_bytes,
-                out_bytes,
-                duration_ms,
-                Some(&full_msg),
-            );
+        if ctx.cli.report_fd == 2 {
+            emit_single_file_metadata("err", in_bytes, out_bytes, ctx.duration_ms, Some(&full_msg));
         } else {
             let line = format!(
                 "status=err in_bytes={in_bytes} out_bytes={out_bytes} \
-                 duration_ms={duration_ms} error={full_msg}"
+                 duration_ms={} error={full_msg}",
+                ctx.duration_ms
             );
-            emit_report_line(cli.report_fd, &line);
+            emit_report_line(ctx.cli.report_fd, &line);
         }
         return;
     }
-    use crate::report::{
-        CodecMeta, ImageFormat, ImageInfo, Mode, Report, ReportError, Status,
-    };
+    use crate::report::{CodecMeta, ImageFormat, ImageInfo, Mode, Report, ReportError, Status};
     let input = if in_bytes > 0 {
         Some(ImageInfo {
-            format: ImageFormat::from(input_format),
+            format: ImageFormat::from(ctx.input_format),
             bytes: in_bytes,
             width: input_dims.map(|d| d.0),
             height: input_dims.map(|d| d.1),
@@ -746,7 +740,7 @@ fn emit_single_file_failure_report(
     };
     let output = if out_bytes > 0 {
         Some(ImageInfo {
-            format: ImageFormat::from(output_format),
+            format: ImageFormat::from(ctx.output_format),
             bytes: out_bytes,
             width: output_dims.map(|d| d.0),
             height: output_dims.map(|d| d.1),
@@ -760,17 +754,17 @@ fn emit_single_file_failure_report(
         input,
         output,
         codec: CodecMeta {
-            quality: params.quality,
-            resize_policy: resize_policy_to_string(params.resize),
+            quality: ctx.params.quality,
+            resize_policy: resize_policy_to_string(ctx.params.resize),
         },
         host: host_meta(),
-        duration_ms,
+        duration_ms: ctx.duration_ms,
         error: Some(ReportError {
             kind: error_kind,
             message: error_msg.to_string(),
         }),
     };
-    emit_report_line(cli.report_fd, &report.to_json());
+    emit_report_line(ctx.cli.report_fd, &report.to_json());
 }
 
 /// Format a `ResizePolicy` back to its CLI string form so the
@@ -831,7 +825,9 @@ fn validate_report_fd(fd: i32) -> Result<(), String> {
         return Ok(());
     }
     if fd < 0 {
-        return Err(format!("--report-fd must be a non-negative integer; got {fd}"));
+        return Err(format!(
+            "--report-fd must be a non-negative integer; got {fd}"
+        ));
     }
     // fcntl(fd, F_GETFL): returns -1 with errno=EBADF if the fd
     // is not open, or the file status flags otherwise.
@@ -843,11 +839,9 @@ fn validate_report_fd(fd: i32) -> Result<(), String> {
     }
     // O_ACCMODE is the access-mode mask (O_RDONLY / O_WRONLY /
     // O_RDWR). A read-only fd is rejected.
-    let accmode = flags & libc::O_ACCMODE as i32;
+    let accmode = flags & libc::O_ACCMODE;
     if accmode != libc::O_WRONLY && accmode != libc::O_RDWR {
-        return Err(format!(
-            "--report-fd {fd}: fd is not open for writing"
-        ));
+        return Err(format!("--report-fd {fd}: fd is not open for writing"));
     }
     Ok(())
 }
@@ -866,9 +860,7 @@ fn emit_report_line(fd: i32, line: &str) {
         eprintln!("{}", line);
         return;
     }
-    let _guard = report_fd_lock()
-        .lock()
-        .unwrap_or_else(|e| e.into_inner());
+    let _guard = report_fd_lock().lock().unwrap_or_else(|e| e.into_inner());
     let bytes = line.as_bytes();
     let mut written = 0;
     while written < bytes.len() {
@@ -884,7 +876,7 @@ fn emit_report_line(fd: i32, line: &str) {
         }
         written += n as usize;
     }
-    let newline: [u8; 1] = [b'\n'];
+    let newline: [u8; 1] = *b"\n";
     unsafe {
         libc::write(fd, newline.as_ptr() as *const _, 1);
     }
@@ -925,67 +917,55 @@ fn codec_error_kind(e: &crate::format::CodecError) -> crate::report::ErrorKind {
 /// the line is emitted as soon as the candidate finishes, in
 /// completion order (no enclosing array).
 fn emit_batch_record_success(
-    cli: &Cli,
-    input_format: Format,
-    output_format: Format,
-    params: &crate::params::Params,
+    ctx: &ReportContext,
     src: &Path,
     report: &crate::format::ConversionReport,
-    duration_ms: u64,
 ) {
-    use crate::report::{
-        CodecMeta, ImageFormat, ImageInfo, Mode, Report, Status,
-    };
+    use crate::report::{CodecMeta, ImageFormat, ImageInfo, Mode, Report, Status};
     let r = Report {
         mode: Mode::Batch,
         status: Status::Ok,
         input: Some(ImageInfo {
-            format: ImageFormat::from(input_format),
+            format: ImageFormat::from(ctx.input_format),
             bytes: report.in_bytes,
             width: Some(report.input_width),
             height: Some(report.input_height),
         }),
         output: Some(ImageInfo {
-            format: ImageFormat::from(output_format),
+            format: ImageFormat::from(ctx.output_format),
             bytes: report.out_bytes,
             width: Some(report.output_width),
             height: Some(report.output_height),
         }),
         codec: CodecMeta {
-            quality: params.quality,
-            resize_policy: resize_policy_to_string(params.resize),
+            quality: ctx.params.quality,
+            resize_policy: resize_policy_to_string(ctx.params.resize),
         },
         host: host_meta(),
-        duration_ms,
+        duration_ms: ctx.duration_ms,
         error: None,
     };
     // `src` is intentionally not embedded in the per-file record;
     // the caller's NDJSON line index identifies the file in
     // completion order (per DE-005 § 2).
     let _ = src;
-    emit_report_line(cli.report_fd, &r.to_json());
+    emit_report_line(ctx.cli.report_fd, &r.to_json());
 }
 
 /// Emit one NDJSON line for a batch-mode codec failure (decode /
 /// encode / write). `in_bytes` is the source byte count when
 /// known (0 when decode never ran); output dims are absent.
 fn emit_batch_record_failure(
-    cli: &Cli,
-    input_format: Format,
-    _output_format: Format,
-    params: &crate::params::Params,
+    ctx: &ReportContext,
     src: &Path,
     in_bytes: u64,
     error_kind: crate::report::ErrorKind,
     error_msg: &str,
-    duration_ms: u64,
 ) {
-    use crate::report::{
-        CodecMeta, ImageFormat, ImageInfo, Mode, Report, ReportError, Status,
-    };
+    use crate::report::{CodecMeta, ImageFormat, ImageInfo, Mode, Report, ReportError, Status};
     let input = if in_bytes > 0 {
         Some(ImageInfo {
-            format: ImageFormat::from(input_format),
+            format: ImageFormat::from(ctx.input_format),
             bytes: in_bytes,
             width: None,
             height: None,
@@ -999,18 +979,18 @@ fn emit_batch_record_failure(
         input,
         output: None,
         codec: CodecMeta {
-            quality: params.quality,
-            resize_policy: resize_policy_to_string(params.resize),
+            quality: ctx.params.quality,
+            resize_policy: resize_policy_to_string(ctx.params.resize),
         },
         host: host_meta(),
-        duration_ms,
+        duration_ms: ctx.duration_ms,
         error: Some(ReportError {
             kind: error_kind,
             message: error_msg.to_string(),
         }),
     };
     let _ = src;
-    emit_report_line(cli.report_fd, &r.to_json());
+    emit_report_line(ctx.cli.report_fd, &r.to_json());
 }
 
 /// Emit one NDJSON line for a post-conversion source-delete
@@ -1019,46 +999,40 @@ fn emit_batch_record_failure(
 /// dimensions because the codec returned Ok; the error.kind is
 /// Io and the message names the delete step.
 fn emit_batch_record_io_failure(
-    cli: &Cli,
-    input_format: Format,
-    output_format: Format,
-    params: &crate::params::Params,
+    ctx: &ReportContext,
     src: &Path,
     conv: &crate::format::ConversionReport,
     error_msg: &str,
-    duration_ms: u64,
 ) {
-    use crate::report::{
-        CodecMeta, ImageFormat, ImageInfo, Mode, Report, ReportError, Status,
-    };
+    use crate::report::{CodecMeta, ImageFormat, ImageInfo, Mode, Report, ReportError, Status};
     let r = Report {
         mode: Mode::Batch,
         status: Status::Err,
         input: Some(ImageInfo {
-            format: ImageFormat::from(input_format),
+            format: ImageFormat::from(ctx.input_format),
             bytes: conv.in_bytes,
             width: Some(conv.input_width),
             height: Some(conv.input_height),
         }),
         output: Some(ImageInfo {
-            format: ImageFormat::from(output_format),
+            format: ImageFormat::from(ctx.output_format),
             bytes: conv.out_bytes,
             width: Some(conv.output_width),
             height: Some(conv.output_height),
         }),
         codec: CodecMeta {
-            quality: params.quality,
-            resize_policy: resize_policy_to_string(params.resize),
+            quality: ctx.params.quality,
+            resize_policy: resize_policy_to_string(ctx.params.resize),
         },
         host: host_meta(),
-        duration_ms,
+        duration_ms: ctx.duration_ms,
         error: Some(ReportError {
             kind: crate::report::ErrorKind::Io,
             message: error_msg.to_string(),
         }),
     };
     let _ = src;
-    emit_report_line(cli.report_fd, &r.to_json());
+    emit_report_line(ctx.cli.report_fd, &r.to_json());
 }
 
 fn print_usage() {
@@ -1126,7 +1100,12 @@ mod cli_tests {
     #[test]
     fn parses_default_invocation() {
         let cli = parse_cli(&v(&["gallery-compress", "/tmp/x"])).unwrap();
-        assert_eq!(cli.mode, Mode::Batch { dir: PathBuf::from("/tmp/x") });
+        assert_eq!(
+            cli.mode,
+            Mode::Batch {
+                dir: PathBuf::from("/tmp/x")
+            }
+        );
         assert_eq!(cli.input_format, None);
         assert_eq!(cli.output_format, None);
     }
@@ -1202,8 +1181,7 @@ mod cli_tests {
 
     #[test]
     fn rejects_single_file_with_positional() {
-        let err = parse_cli(&v(&["gallery-compress", "--single-file", "/tmp/x"]))
-            .unwrap_err();
+        let err = parse_cli(&v(&["gallery-compress", "--single-file", "/tmp/x"])).unwrap_err();
         assert_eq!(err, CliError::AmbiguousMode);
     }
 

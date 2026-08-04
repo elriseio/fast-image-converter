@@ -21,7 +21,10 @@ impl ResizePolicy {
         match *self {
             ResizePolicy::None => width,
             ResizePolicy::MaxWidth(m) => width.min(m),
-            ResizePolicy::PortraitLandscape { portrait, landscape } => {
+            ResizePolicy::PortraitLandscape {
+                portrait,
+                landscape,
+            } => {
                 if height >= width {
                     portrait
                 } else {
@@ -88,11 +91,7 @@ pub trait Codec {
     /// Encode the decoded image into a byte buffer. The default impl
     /// writes to `dst` and reads the bytes back; codecs that already
     /// build the bytes in memory override this for efficiency.
-    fn encode_to_vec(
-        &self,
-        img: &image::DynamicImage,
-        quality: u8,
-    ) -> Result<Vec<u8>, CodecError> {
+    fn encode_to_vec(&self, img: &image::DynamicImage, quality: u8) -> Result<Vec<u8>, CodecError> {
         // Default: write to a tempfile, read back. The webp / png /
         // jpeg codecs all override this with a direct buffer build.
         let tmp = std::env::temp_dir().join(format!(
@@ -110,11 +109,7 @@ pub trait Codec {
     /// written. The codec is responsible for the directory-existence
     /// contract (the source's parent is guaranteed to exist by the
     /// caller).
-    fn encode(
-        &self,
-        img: &image::DynamicImage,
-        dst: &Path,
-    ) -> Result<u64, CodecError>;
+    fn encode(&self, img: &image::DynamicImage, dst: &Path) -> Result<u64, CodecError>;
 
     /// Encode honouring the caller-supplied quality. Default ignores
     /// `quality` and delegates to `encode` (matches the v0 baseline
@@ -157,11 +152,7 @@ pub trait Codec {
     /// Convert one file with `Params::default()` (the v0 baseline).
     /// Retained for the round-trip tests under `format::tests`.
     #[allow(dead_code)] // used only by `format::tests`; the binary calls convert_one_with
-    fn convert_one(
-        &self,
-        src: &Path,
-        dst: &Path,
-    ) -> Result<ConversionReport, CodecError> {
+    fn convert_one(&self, src: &Path, dst: &Path) -> Result<ConversionReport, CodecError> {
         self.convert_one_with(src, dst, &Params::default())
     }
 }
@@ -184,10 +175,7 @@ pub struct ConversionReport {
 
 /// Apply the resize policy to a decoded image. Returns the original
 /// image unchanged when the target width equals the current width.
-pub(crate) fn apply_resize(
-    img: &image::DynamicImage,
-    policy: ResizePolicy,
-) -> image::DynamicImage {
+pub(crate) fn apply_resize(img: &image::DynamicImage, policy: ResizePolicy) -> image::DynamicImage {
     let (w, h) = (img.width(), img.height());
     let target_w = policy.target_width(w, h);
     if target_w >= w {
@@ -224,14 +212,9 @@ impl Codec for JpegToWebp {
             .map_err(|e| CodecError::Decode(e.to_string()))
     }
 
-    fn encode(
-        &self,
-        img: &image::DynamicImage,
-        dst: &Path,
-    ) -> Result<u64, CodecError> {
+    fn encode(&self, img: &image::DynamicImage, dst: &Path) -> Result<u64, CodecError> {
         let rgb = img.to_rgb8();
-        let encoder =
-            webp::Encoder::from_rgb(rgb.as_raw(), rgb.width(), rgb.height());
+        let encoder = webp::Encoder::from_rgb(rgb.as_raw(), rgb.width(), rgb.height());
         let memory = encoder.encode(WEBP_QUALITY);
         let bytes: Vec<u8> = memory.as_ref().to_vec();
         std::fs::write(dst, &bytes).map_err(|e| CodecError::Io(e.to_string()))?;
@@ -249,14 +232,9 @@ impl Codec for JpegToWebp {
         Ok(bytes.len() as u64)
     }
 
-    fn encode_to_vec(
-        &self,
-        img: &image::DynamicImage,
-        quality: u8,
-    ) -> Result<Vec<u8>, CodecError> {
+    fn encode_to_vec(&self, img: &image::DynamicImage, quality: u8) -> Result<Vec<u8>, CodecError> {
         let rgb = img.to_rgb8();
-        let encoder =
-            webp::Encoder::from_rgb(rgb.as_raw(), rgb.width(), rgb.height());
+        let encoder = webp::Encoder::from_rgb(rgb.as_raw(), rgb.width(), rgb.height());
         let memory = encoder.encode(quality as f32);
         Ok(memory.as_ref().to_vec())
     }
@@ -293,17 +271,9 @@ impl Codec for PngToWebp {
             .map_err(|e| CodecError::Decode(e.to_string()))
     }
 
-    fn encode(
-        &self,
-        img: &image::DynamicImage,
-        dst: &Path,
-    ) -> Result<u64, CodecError> {
+    fn encode(&self, img: &image::DynamicImage, dst: &Path) -> Result<u64, CodecError> {
         let rgba = img.to_rgba8();
-        let encoder = webp::Encoder::from_rgba(
-            rgba.as_raw(),
-            rgba.width(),
-            rgba.height(),
-        );
+        let encoder = webp::Encoder::from_rgba(rgba.as_raw(), rgba.width(), rgba.height());
         let memory = encoder.encode(WEBP_QUALITY);
         let bytes: Vec<u8> = memory.as_ref().to_vec();
         std::fs::write(dst, &bytes).map_err(|e| CodecError::Io(e.to_string()))?;
@@ -321,17 +291,9 @@ impl Codec for PngToWebp {
         Ok(bytes.len() as u64)
     }
 
-    fn encode_to_vec(
-        &self,
-        img: &image::DynamicImage,
-        quality: u8,
-    ) -> Result<Vec<u8>, CodecError> {
+    fn encode_to_vec(&self, img: &image::DynamicImage, quality: u8) -> Result<Vec<u8>, CodecError> {
         let rgba = img.to_rgba8();
-        let encoder = webp::Encoder::from_rgba(
-            rgba.as_raw(),
-            rgba.width(),
-            rgba.height(),
-        );
+        let encoder = webp::Encoder::from_rgba(rgba.as_raw(), rgba.width(), rgba.height());
         let memory = encoder.encode(quality as f32);
         Ok(memory.as_ref().to_vec())
     }
@@ -382,11 +344,7 @@ impl Codec for WebpToPng {
         Ok(buf)
     }
 
-    fn encode(
-        &self,
-        img: &image::DynamicImage,
-        dst: &Path,
-    ) -> Result<u64, CodecError> {
+    fn encode(&self, img: &image::DynamicImage, dst: &Path) -> Result<u64, CodecError> {
         let bytes = self.encode_to_vec(img, 85)?;
         std::fs::write(dst, &bytes).map_err(|e| CodecError::Io(e.to_string()))?;
         Ok(bytes.len() as u64)
@@ -415,19 +373,12 @@ impl Codec for WebpToJpeg {
             .map_err(|e| CodecError::Decode(e.to_string()))
     }
 
-    fn encode(
-        &self,
-        img: &image::DynamicImage,
-        dst: &Path,
-    ) -> Result<u64, CodecError> {
+    fn encode(&self, img: &image::DynamicImage, dst: &Path) -> Result<u64, CodecError> {
         let rgb = img.to_rgb8();
-        let file = std::fs::File::create(dst)
-            .map_err(|e| CodecError::Io(e.to_string()))?;
+        let file = std::fs::File::create(dst).map_err(|e| CodecError::Io(e.to_string()))?;
         let mut writer = std::io::BufWriter::new(file);
-        let encoder = image::codecs::jpeg::JpegEncoder::new_with_quality(
-            &mut writer,
-            WEBP_QUALITY as u8,
-        );
+        let encoder =
+            image::codecs::jpeg::JpegEncoder::new_with_quality(&mut writer, WEBP_QUALITY as u8);
         use image::ImageEncoder;
         encoder
             .write_image(
@@ -454,19 +405,12 @@ impl Codec for WebpToJpeg {
         Ok(bytes.len() as u64)
     }
 
-    fn encode_to_vec(
-        &self,
-        img: &image::DynamicImage,
-        quality: u8,
-    ) -> Result<Vec<u8>, CodecError> {
+    fn encode_to_vec(&self, img: &image::DynamicImage, quality: u8) -> Result<Vec<u8>, CodecError> {
         let rgb = img.to_rgb8();
         let mut buf = Vec::with_capacity(rgb.width() as usize * rgb.height() as usize);
         {
             let mut writer = std::io::Cursor::new(&mut buf);
-            let encoder = image::codecs::jpeg::JpegEncoder::new_with_quality(
-                &mut writer,
-                quality,
-            );
+            let encoder = image::codecs::jpeg::JpegEncoder::new_with_quality(&mut writer, quality);
             use image::ImageEncoder;
             encoder
                 .write_image(
@@ -638,11 +582,7 @@ impl Codec for JpegToPng {
         Ok(buf)
     }
 
-    fn encode(
-        &self,
-        img: &image::DynamicImage,
-        dst: &Path,
-    ) -> Result<u64, CodecError> {
+    fn encode(&self, img: &image::DynamicImage, dst: &Path) -> Result<u64, CodecError> {
         let bytes = self.encode_to_vec(img, 85)?;
         std::fs::write(dst, &bytes).map_err(|e| CodecError::Io(e.to_string()))?;
         Ok(bytes.len() as u64)
@@ -671,19 +611,12 @@ impl Codec for PngToJpeg {
             .map_err(|e| CodecError::Decode(e.to_string()))
     }
 
-    fn encode(
-        &self,
-        img: &image::DynamicImage,
-        dst: &Path,
-    ) -> Result<u64, CodecError> {
+    fn encode(&self, img: &image::DynamicImage, dst: &Path) -> Result<u64, CodecError> {
         let rgb = img.to_rgb8();
-        let file = std::fs::File::create(dst)
-            .map_err(|e| CodecError::Io(e.to_string()))?;
+        let file = std::fs::File::create(dst).map_err(|e| CodecError::Io(e.to_string()))?;
         let mut writer = std::io::BufWriter::new(file);
-        let encoder = image::codecs::jpeg::JpegEncoder::new_with_quality(
-            &mut writer,
-            WEBP_QUALITY as u8,
-        );
+        let encoder =
+            image::codecs::jpeg::JpegEncoder::new_with_quality(&mut writer, WEBP_QUALITY as u8);
         use image::ImageEncoder;
         encoder
             .write_image(
@@ -710,19 +643,12 @@ impl Codec for PngToJpeg {
         Ok(bytes.len() as u64)
     }
 
-    fn encode_to_vec(
-        &self,
-        img: &image::DynamicImage,
-        quality: u8,
-    ) -> Result<Vec<u8>, CodecError> {
+    fn encode_to_vec(&self, img: &image::DynamicImage, quality: u8) -> Result<Vec<u8>, CodecError> {
         let rgb = img.to_rgb8();
         let mut buf = Vec::with_capacity(rgb.width() as usize * rgb.height() as usize);
         {
             let mut writer = std::io::Cursor::new(&mut buf);
-            let encoder = image::codecs::jpeg::JpegEncoder::new_with_quality(
-                &mut writer,
-                quality,
-            );
+            let encoder = image::codecs::jpeg::JpegEncoder::new_with_quality(&mut writer, quality);
             use image::ImageEncoder;
             encoder
                 .write_image(
@@ -810,7 +736,10 @@ mod tests {
         assert!(report.out_bytes > 0);
         assert!(dst.exists());
         let head = std::fs::read(&dst).unwrap();
-        assert_eq!(&head[0..8], &[0x89, b'P', b'N', b'G', 0x0D, 0x0A, 0x1A, 0x0A]);
+        assert_eq!(
+            &head[0..8],
+            &[0x89, b'P', b'N', b'G', 0x0D, 0x0A, 0x1A, 0x0A]
+        );
         let _ = std::fs::remove_dir_all(&tmp);
     }
 
@@ -842,11 +771,11 @@ mod tests {
             portrait: 800,
             landscape: 1000,
         };
-        assert_eq!(p.target_width(640, 960), 800);   // portrait
-        assert_eq!(p.target_width(960, 640), 1000);  // landscape
-        assert_eq!(p.target_width(800, 800), 800);   // square (h >= w)
-        assert_eq!(p.target_width(500, 800), 800);   // already smaller -> clamp
+        assert_eq!(p.target_width(640, 960), 800); // portrait
+        assert_eq!(p.target_width(960, 640), 1000); // landscape
+        assert_eq!(p.target_width(800, 800), 800); // square (h >= w)
+        assert_eq!(p.target_width(500, 800), 800); // already smaller -> clamp
         assert_eq!(p.target_width(1200, 800), 1000); // landscape
-        assert_eq!(p.target_width(800, 1200), 800);  // portrait
+        assert_eq!(p.target_width(800, 1200), 800); // portrait
     }
 }

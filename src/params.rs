@@ -45,9 +45,7 @@ pub fn parse_resize(s: &str) -> Result<ResizePolicy, String> {
             let (k, v) = kv
                 .split_once('=')
                 .ok_or_else(|| format!("expected key=value in {kv:?}"))?;
-            let n: u32 = v
-                .parse()
-                .map_err(|_| format!("invalid {k} width: {v:?}"))?;
+            let n: u32 = v.parse().map_err(|_| format!("invalid {k} width: {v:?}"))?;
             if n == 0 {
                 return Err(format!("{k} width must be > 0"));
             }
@@ -58,10 +56,8 @@ pub fn parse_resize(s: &str) -> Result<ResizePolicy, String> {
             }
         }
         return Ok(ResizePolicy::PortraitLandscape {
-            portrait: portrait
-                .ok_or_else(|| "auto: missing portrait=<W>".to_string())?,
-            landscape: landscape
-                .ok_or_else(|| "auto: missing landscape=<H>".to_string())?,
+            portrait: portrait.ok_or_else(|| "auto: missing portrait=<W>".to_string())?,
+            landscape: landscape.ok_or_else(|| "auto: missing landscape=<H>".to_string())?,
         });
     }
     Err(format!("got {s:?}"))
