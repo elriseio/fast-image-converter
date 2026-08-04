@@ -47,6 +47,9 @@ struct Cli {
     quality: Option<u8>,
     resize: Option<crate::format::ResizePolicy>,
     keep_source: bool,
+    /// Emit the per-file metadata line as a structured NDJSON
+    /// record instead of the v0 key=value shape. Per DE-005.
+    json: bool,
 }
 
 fn parse_quality(s: &str) -> Result<u8, String> {
@@ -67,6 +70,7 @@ fn parse_cli(args: &[String]) -> Result<Cli, CliError> {
     let mut resize: Option<crate::format::ResizePolicy> = None;
     let mut keep_source = false;
     let mut single_file = false;
+    let mut json = false;
 
     let mut i = 1;
     while i < args.len() {
@@ -102,6 +106,10 @@ fn parse_cli(args: &[String]) -> Result<Cli, CliError> {
             }
             "--single-file" | "-1" => {
                 single_file = true;
+                i += 1;
+            }
+            "--json" => {
+                json = true;
                 i += 1;
             }
             "-h" | "--help" => return Err(CliError::Usage),
@@ -142,6 +150,7 @@ fn parse_cli(args: &[String]) -> Result<Cli, CliError> {
         quality,
         resize,
         keep_source,
+        json,
     })
 }
 
@@ -413,12 +422,16 @@ fn run_single_file(cli: &Cli) -> ExitCode {
         return ExitCode::from(1);
     }
 
-    emit_single_file_metadata(
-        "ok",
+    emit_single_file_success_report(
+        cli,
+        input_format,
+        output_format,
+        &params,
         in_bytes_buf.len() as u64,
+        (img.width(), img.height()),
         encoded.len() as u64,
+        (resized.width(), resized.height()),
         started.elapsed().as_millis() as u64,
-        None,
     );
     ExitCode::from(0)
 }
@@ -446,6 +459,90 @@ fn emit_single_file_metadata(
             "status={status} in_bytes={in_bytes} out_bytes={out_bytes} \
              duration_ms={duration_ms}"
         ),
+    }
+}
+
+/// Emit the success-path single-file report on stderr. When
+/// `--json` is set, emits a structured NDJSON record per DE-005
+/// § 2 (one JSON object per line). Otherwise falls back to the
+/// v0 key=value shape emitted by `emit_single_file_metadata`.
+///
+/// Failure paths in single-file mode still use
+/// `emit_single_file_metadata` directly; they are migrated to a
+/// JSON-capable dispatcher in commit 3 (per DE-005 § 4).
+fn emit_single_file_success_report(
+    cli: &Cli,
+    input_format: Format,
+    output_format: Format,
+    params: &crate::params::Params,
+    in_bytes: u64,
+    input_dims: (u32, u32),
+    out_bytes: u64,
+    output_dims: (u32, u32),
+    duration_ms: u64,
+) {
+    if !cli.json {
+        emit_single_file_metadata(
+            "ok",
+            in_bytes,
+            out_bytes,
+            duration_ms,
+            None,
+        );
+        return;
+    }
+    use crate::report::{
+        CodecMeta, HostMeta, ImageFormat, ImageInfo, Mode, Report, Status,
+    };
+    let report = Report {
+        mode: Mode::SingleFile,
+        status: Status::Ok,
+        input: Some(ImageInfo {
+            format: ImageFormat::from(input_format),
+            bytes: in_bytes,
+            width: Some(input_dims.0),
+            height: Some(input_dims.1),
+        }),
+        output: Some(ImageInfo {
+            format: ImageFormat::from(output_format),
+            bytes: out_bytes,
+            width: Some(output_dims.0),
+            height: Some(output_dims.1),
+        }),
+        codec: CodecMeta {
+            quality: params.quality,
+            resize_policy: resize_policy_to_string(params.resize),
+        },
+        host: host_meta(),
+        duration_ms,
+        error: None,
+    };
+    eprintln!("{}", report.to_json());
+}
+
+/// Format a `ResizePolicy` back to its CLI string form so the
+/// JSON report is round-trippable against `parse_resize`. Used by
+/// the `--json` mode; the v0 key=value shape does not embed the
+/// policy.
+fn resize_policy_to_string(p: crate::format::ResizePolicy) -> String {
+    use crate::format::ResizePolicy;
+    match p {
+        ResizePolicy::None => "none".to_string(),
+        ResizePolicy::MaxWidth(w) => format!("cap={w}"),
+        ResizePolicy::PortraitLandscape {
+            portrait,
+            landscape,
+        } => format!("auto:portrait={portrait},landscape={landscape}"),
+    }
+}
+
+/// Build-time host metadata. `libwebp_version` is hard-coded for
+/// now; commit 6 (build.rs) wires it to the pkg-config-reported
+/// version. `build_commit_sha` is `None` until commit 6 lands.
+fn host_meta() -> crate::report::HostMeta {
+    crate::report::HostMeta {
+        libwebp_version: "1.6.0",
+        build_commit_sha: None,
     }
 }
 
