@@ -79,6 +79,33 @@ pub trait Codec {
     /// Decode the source file into a `DynamicImage`.
     fn decode(&self, src: &Path) -> Result<image::DynamicImage, CodecError>;
 
+    /// Decode bytes that are already in memory (used by single-file
+    /// stdin mode in DE-004).
+    fn decode_bytes(&self, bytes: &[u8]) -> Result<image::DynamicImage, CodecError> {
+        image::load_from_memory(bytes).map_err(|e| CodecError::Decode(e.to_string()))
+    }
+
+    /// Encode the decoded image into a byte buffer. The default impl
+    /// writes to `dst` and reads the bytes back; codecs that already
+    /// build the bytes in memory override this for efficiency.
+    fn encode_to_vec(
+        &self,
+        img: &image::DynamicImage,
+        quality: u8,
+    ) -> Result<Vec<u8>, CodecError> {
+        // Default: write to a tempfile, read back. The webp / png /
+        // jpeg codecs all override this with a direct buffer build.
+        let tmp = std::env::temp_dir().join(format!(
+            "convert-to-webp-encode-{}-{quality}.bin",
+            std::process::id()
+        ));
+        let n = self.encode_with_quality(img, &tmp, quality)?;
+        let bytes = std::fs::read(&tmp).map_err(|e| CodecError::Io(e.to_string()))?;
+        let _ = std::fs::remove_file(&tmp);
+        debug_assert_eq!(bytes.len() as u64, n);
+        Ok(bytes)
+    }
+
     /// Encode the decoded image to `dst` and return the number of bytes
     /// written. The codec is responsible for the directory-existence
     /// contract (the source's parent is guaranteed to exist by the
@@ -144,7 +171,7 @@ pub struct ConversionReport {
 
 /// Apply the resize policy to a decoded image. Returns the original
 /// image unchanged when the target width equals the current width.
-fn apply_resize(
+pub(crate) fn apply_resize(
     img: &image::DynamicImage,
     policy: ResizePolicy,
 ) -> image::DynamicImage {
@@ -204,13 +231,21 @@ impl Codec for JpegToWebp {
         dst: &Path,
         quality: u8,
     ) -> Result<u64, CodecError> {
+        let bytes = self.encode_to_vec(img, quality)?;
+        std::fs::write(dst, &bytes).map_err(|e| CodecError::Io(e.to_string()))?;
+        Ok(bytes.len() as u64)
+    }
+
+    fn encode_to_vec(
+        &self,
+        img: &image::DynamicImage,
+        quality: u8,
+    ) -> Result<Vec<u8>, CodecError> {
         let rgb = img.to_rgb8();
         let encoder =
             webp::Encoder::from_rgb(rgb.as_raw(), rgb.width(), rgb.height());
         let memory = encoder.encode(quality as f32);
-        let bytes: Vec<u8> = memory.as_ref().to_vec();
-        std::fs::write(dst, &bytes).map_err(|e| CodecError::Io(e.to_string()))?;
-        Ok(bytes.len() as u64)
+        Ok(memory.as_ref().to_vec())
     }
 }
 
@@ -268,6 +303,16 @@ impl Codec for PngToWebp {
         dst: &Path,
         quality: u8,
     ) -> Result<u64, CodecError> {
+        let bytes = self.encode_to_vec(img, quality)?;
+        std::fs::write(dst, &bytes).map_err(|e| CodecError::Io(e.to_string()))?;
+        Ok(bytes.len() as u64)
+    }
+
+    fn encode_to_vec(
+        &self,
+        img: &image::DynamicImage,
+        quality: u8,
+    ) -> Result<Vec<u8>, CodecError> {
         let rgba = img.to_rgba8();
         let encoder = webp::Encoder::from_rgba(
             rgba.as_raw(),
@@ -275,9 +320,7 @@ impl Codec for PngToWebp {
             rgba.height(),
         );
         let memory = encoder.encode(quality as f32);
-        let bytes: Vec<u8> = memory.as_ref().to_vec();
-        std::fs::write(dst, &bytes).map_err(|e| CodecError::Io(e.to_string()))?;
-        Ok(bytes.len() as u64)
+        Ok(memory.as_ref().to_vec())
     }
 }
 
@@ -303,29 +346,37 @@ impl Codec for WebpToPng {
             .map_err(|e| CodecError::Decode(e.to_string()))
     }
 
+    fn encode_to_vec(
+        &self,
+        img: &image::DynamicImage,
+        _quality: u8,
+    ) -> Result<Vec<u8>, CodecError> {
+        let rgba = img.to_rgba8();
+        let mut buf = Vec::with_capacity(rgba.width() as usize * rgba.height() as usize);
+        {
+            let mut writer = std::io::Cursor::new(&mut buf);
+            let encoder = image::codecs::png::PngEncoder::new(&mut writer);
+            use image::ImageEncoder;
+            encoder
+                .write_image(
+                    rgba.as_raw(),
+                    rgba.width(),
+                    rgba.height(),
+                    image::ExtendedColorType::Rgba8,
+                )
+                .map_err(|e| CodecError::Encode(e.to_string()))?;
+        }
+        Ok(buf)
+    }
+
     fn encode(
         &self,
         img: &image::DynamicImage,
         dst: &Path,
     ) -> Result<u64, CodecError> {
-        let rgba = img.to_rgba8();
-        let file = std::fs::File::create(dst)
-            .map_err(|e| CodecError::Io(e.to_string()))?;
-        let mut writer = std::io::BufWriter::new(file);
-        let encoder = image::codecs::png::PngEncoder::new(&mut writer);
-        use image::ImageEncoder;
-        encoder
-            .write_image(
-                rgba.as_raw(),
-                rgba.width(),
-                rgba.height(),
-                image::ExtendedColorType::Rgba8,
-            )
-            .map_err(|e| CodecError::Encode(e.to_string()))?;
-        let out_bytes = std::fs::metadata(dst)
-            .map_err(|e| CodecError::Io(e.to_string()))?
-            .len();
-        Ok(out_bytes)
+        let bytes = self.encode_to_vec(img, 85)?;
+        std::fs::write(dst, &bytes).map_err(|e| CodecError::Io(e.to_string()))?;
+        Ok(bytes.len() as u64)
     }
 }
 
@@ -385,27 +436,35 @@ impl Codec for WebpToJpeg {
         dst: &Path,
         quality: u8,
     ) -> Result<u64, CodecError> {
+        let bytes = self.encode_to_vec(img, quality)?;
+        std::fs::write(dst, &bytes).map_err(|e| CodecError::Io(e.to_string()))?;
+        Ok(bytes.len() as u64)
+    }
+
+    fn encode_to_vec(
+        &self,
+        img: &image::DynamicImage,
+        quality: u8,
+    ) -> Result<Vec<u8>, CodecError> {
         let rgb = img.to_rgb8();
-        let file = std::fs::File::create(dst)
-            .map_err(|e| CodecError::Io(e.to_string()))?;
-        let mut writer = std::io::BufWriter::new(file);
-        let encoder = image::codecs::jpeg::JpegEncoder::new_with_quality(
-            &mut writer,
-            quality,
-        );
-        use image::ImageEncoder;
-        encoder
-            .write_image(
-                rgb.as_raw(),
-                rgb.width(),
-                rgb.height(),
-                image::ExtendedColorType::Rgb8,
-            )
-            .map_err(|e| CodecError::Encode(e.to_string()))?;
-        let out_bytes = std::fs::metadata(dst)
-            .map_err(|e| CodecError::Io(e.to_string()))?
-            .len();
-        Ok(out_bytes)
+        let mut buf = Vec::with_capacity(rgb.width() as usize * rgb.height() as usize);
+        {
+            let mut writer = std::io::Cursor::new(&mut buf);
+            let encoder = image::codecs::jpeg::JpegEncoder::new_with_quality(
+                &mut writer,
+                quality,
+            );
+            use image::ImageEncoder;
+            encoder
+                .write_image(
+                    rgb.as_raw(),
+                    rgb.width(),
+                    rgb.height(),
+                    image::ExtendedColorType::Rgb8,
+                )
+                .map_err(|e| CodecError::Encode(e.to_string()))?;
+        }
+        Ok(buf)
     }
 }
 
@@ -493,6 +552,32 @@ impl CodecImpl {
             CodecImpl::PngToJpeg(c) => c.convert_one_with(src, dst, params),
         }
     }
+
+    pub fn decode_bytes(&self, bytes: &[u8]) -> Result<image::DynamicImage, CodecError> {
+        match self {
+            CodecImpl::JpegToWebp(c) => c.decode_bytes(bytes),
+            CodecImpl::PngToWebp(c) => c.decode_bytes(bytes),
+            CodecImpl::WebpToPng(c) => c.decode_bytes(bytes),
+            CodecImpl::WebpToJpeg(c) => c.decode_bytes(bytes),
+            CodecImpl::JpegToPng(c) => c.decode_bytes(bytes),
+            CodecImpl::PngToJpeg(c) => c.decode_bytes(bytes),
+        }
+    }
+
+    pub fn encode_to_vec(
+        &self,
+        img: &image::DynamicImage,
+        quality: u8,
+    ) -> Result<Vec<u8>, CodecError> {
+        match self {
+            CodecImpl::JpegToWebp(c) => c.encode_to_vec(img, quality),
+            CodecImpl::PngToWebp(c) => c.encode_to_vec(img, quality),
+            CodecImpl::WebpToPng(c) => c.encode_to_vec(img, quality),
+            CodecImpl::WebpToJpeg(c) => c.encode_to_vec(img, quality),
+            CodecImpl::JpegToPng(c) => c.encode_to_vec(img, quality),
+            CodecImpl::PngToJpeg(c) => c.encode_to_vec(img, quality),
+        }
+    }
 }
 
 /// JPEG input -> PNG output (lossless).
@@ -517,29 +602,37 @@ impl Codec for JpegToPng {
             .map_err(|e| CodecError::Decode(e.to_string()))
     }
 
+    fn encode_to_vec(
+        &self,
+        img: &image::DynamicImage,
+        _quality: u8,
+    ) -> Result<Vec<u8>, CodecError> {
+        let rgba = img.to_rgba8();
+        let mut buf = Vec::with_capacity(rgba.width() as usize * rgba.height() as usize);
+        {
+            let mut writer = std::io::Cursor::new(&mut buf);
+            let encoder = image::codecs::png::PngEncoder::new(&mut writer);
+            use image::ImageEncoder;
+            encoder
+                .write_image(
+                    rgba.as_raw(),
+                    rgba.width(),
+                    rgba.height(),
+                    image::ExtendedColorType::Rgba8,
+                )
+                .map_err(|e| CodecError::Encode(e.to_string()))?;
+        }
+        Ok(buf)
+    }
+
     fn encode(
         &self,
         img: &image::DynamicImage,
         dst: &Path,
     ) -> Result<u64, CodecError> {
-        let rgba = img.to_rgba8();
-        let file = std::fs::File::create(dst)
-            .map_err(|e| CodecError::Io(e.to_string()))?;
-        let mut writer = std::io::BufWriter::new(file);
-        let encoder = image::codecs::png::PngEncoder::new(&mut writer);
-        use image::ImageEncoder;
-        encoder
-            .write_image(
-                rgba.as_raw(),
-                rgba.width(),
-                rgba.height(),
-                image::ExtendedColorType::Rgba8,
-            )
-            .map_err(|e| CodecError::Encode(e.to_string()))?;
-        let out_bytes = std::fs::metadata(dst)
-            .map_err(|e| CodecError::Io(e.to_string()))?
-            .len();
-        Ok(out_bytes)
+        let bytes = self.encode_to_vec(img, 85)?;
+        std::fs::write(dst, &bytes).map_err(|e| CodecError::Io(e.to_string()))?;
+        Ok(bytes.len() as u64)
     }
 }
 
@@ -599,27 +692,35 @@ impl Codec for PngToJpeg {
         dst: &Path,
         quality: u8,
     ) -> Result<u64, CodecError> {
+        let bytes = self.encode_to_vec(img, quality)?;
+        std::fs::write(dst, &bytes).map_err(|e| CodecError::Io(e.to_string()))?;
+        Ok(bytes.len() as u64)
+    }
+
+    fn encode_to_vec(
+        &self,
+        img: &image::DynamicImage,
+        quality: u8,
+    ) -> Result<Vec<u8>, CodecError> {
         let rgb = img.to_rgb8();
-        let file = std::fs::File::create(dst)
-            .map_err(|e| CodecError::Io(e.to_string()))?;
-        let mut writer = std::io::BufWriter::new(file);
-        let encoder = image::codecs::jpeg::JpegEncoder::new_with_quality(
-            &mut writer,
-            quality,
-        );
-        use image::ImageEncoder;
-        encoder
-            .write_image(
-                rgb.as_raw(),
-                rgb.width(),
-                rgb.height(),
-                image::ExtendedColorType::Rgb8,
-            )
-            .map_err(|e| CodecError::Encode(e.to_string()))?;
-        let out_bytes = std::fs::metadata(dst)
-            .map_err(|e| CodecError::Io(e.to_string()))?
-            .len();
-        Ok(out_bytes)
+        let mut buf = Vec::with_capacity(rgb.width() as usize * rgb.height() as usize);
+        {
+            let mut writer = std::io::Cursor::new(&mut buf);
+            let encoder = image::codecs::jpeg::JpegEncoder::new_with_quality(
+                &mut writer,
+                quality,
+            );
+            use image::ImageEncoder;
+            encoder
+                .write_image(
+                    rgb.as_raw(),
+                    rgb.width(),
+                    rgb.height(),
+                    image::ExtendedColorType::Rgb8,
+                )
+                .map_err(|e| CodecError::Encode(e.to_string()))?;
+        }
+        Ok(buf)
     }
 }
 

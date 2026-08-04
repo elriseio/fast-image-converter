@@ -176,14 +176,7 @@ fn main() -> ExitCode {
     let dir = match &cli.mode {
         Mode::Batch { dir } => dir.clone(),
         Mode::SingleFile => {
-            // Single-file mode is implemented in DE-004 commits 2+.
-            // This branch is reachable only if the user explicitly
-            // passes --single-file; commit 1 introduces the parser
-            // state without yet wiring the read/write path.
-            eprintln!(
-                "{BINARY_NAME}: --single-file mode is not yet implemented"
-            );
-            return ExitCode::from(2);
+            return run_single_file(&cli);
         }
     };
     let gallery_base =
@@ -312,6 +305,84 @@ fn has_accepted_extension(p: &Path, accepted: &'static [&'static str]) -> bool {
         None => return false,
     };
     accepted.iter().any(|a| a.eq_ignore_ascii_case(&ext))
+}
+
+/// Single-file mode: read all of stdin, decode via the chosen codec,
+/// encode with the supplied params, and write the encoded bytes to
+/// stdout. The metadata line on stderr lands in DE-004 commit 3; this
+/// helper only establishes the read/write plumbing and exit-code
+/// contract.
+fn run_single_file(cli: &Cli) -> ExitCode {
+    use std::io::{Read, Write};
+
+    // Default = v0 behaviour: jpg -> webp. Both flags are explicit
+    // overrides; the absent pair remains the v0 default.
+    let input_format = cli.input_format.unwrap_or(Format::Jpg);
+    let output_format = cli.output_format.unwrap_or(Format::Webp);
+
+    let codec: CodecImpl = match (input_format, output_format) {
+        (Format::Jpg, Format::Webp) => CodecImpl::JpegToWebp(JpegToWebp),
+        (Format::Png, Format::Webp) => CodecImpl::PngToWebp(PngToWebp),
+        (Format::Webp, Format::Png) => CodecImpl::WebpToPng(WebpToPng),
+        (Format::Webp, Format::Jpg) => CodecImpl::WebpToJpeg(WebpToJpeg),
+        (Format::Jpg, Format::Png) => CodecImpl::JpegToPng(JpegToPng),
+        (Format::Png, Format::Jpg) => CodecImpl::PngToJpeg(PngToJpeg),
+        (Format::Jpg, Format::Jpg)
+        | (Format::Png, Format::Png)
+        | (Format::Webp, Format::Webp) => {
+            eprintln!(
+                "{BINARY_NAME}: same input/output format ({input_format:?}) \
+                 is a no-op; refusing to overwrite the source."
+            );
+            return ExitCode::from(2);
+        }
+    };
+
+    let mut params = crate::params::Params::default();
+    if let Some(q) = cli.quality {
+        params.quality = q;
+    }
+    if let Some(r) = cli.resize {
+        params.resize = r;
+    }
+    // keep_source is silently ignored in single-file mode (no source
+    // filesystem path to preserve; DE-004 §2 Scope).
+
+    let mut in_bytes_buf = Vec::new();
+    if let Err(e) = std::io::stdin().read_to_end(&mut in_bytes_buf) {
+        eprintln!("{BINARY_NAME}: cannot read stdin: {e}");
+        return ExitCode::from(1);
+    }
+
+    let img = match codec.decode_bytes(&in_bytes_buf) {
+        Ok(img) => img,
+        Err(e) => {
+            eprintln!("{BINARY_NAME}: decode error: {e}");
+            return ExitCode::from(1);
+        }
+    };
+
+    let resized = crate::format::apply_resize(&img, params.resize);
+
+    let encoded = match codec.encode_to_vec(&resized, params.quality) {
+        Ok(b) => b,
+        Err(e) => {
+            eprintln!("{BINARY_NAME}: encode error: {e}");
+            return ExitCode::from(1);
+        }
+    };
+
+    let stdout = std::io::stdout();
+    let mut out = stdout.lock();
+    if let Err(e) = out.write_all(&encoded) {
+        eprintln!("{BINARY_NAME}: cannot write stdout: {e}");
+        return ExitCode::from(1);
+    }
+    if let Err(e) = out.flush() {
+        eprintln!("{BINARY_NAME}: cannot flush stdout: {e}");
+        return ExitCode::from(1);
+    }
+    ExitCode::from(0)
 }
 
 fn print_usage() {
