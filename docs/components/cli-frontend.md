@@ -36,12 +36,32 @@ Wave 1 additions (per ADR-0001):
 | `argv` | `--output-format <fmt>` | `&str` | optional; `jpg` \| `png` \| `webp`; default = `webp` |
 | `argv` | `--quality <n>` | `u8` | optional; planned Wave 2 (not Wave 1) |
 
+Wave 4 additions (per ADR-0001):
+
+| Source | Field | Type | Notes |
+|---|---|---|---|
+| `argv` | `--resize <policy>` | `&str` | optional; `none` \| `cap=<W>` \| `auto:portrait=<W>,landscape=<H>`; default = `auto:portrait=800,landscape=1000` |
+| `argv` | `--keep-source` | bool flag | optional; default `false`; v0 baseline removes the source after a successful conversion |
+
+Wave 4 (DE-004) additions:
+
+| Source | Field | Type | Notes |
+|---|---|---|---|
+| `argv` | `--single-file`, `-1` | bool flag | optional; default `false`; switches the binary to single-file stdin/stdout mode |
+
+Wave 5 (DE-005) additions:
+
+| Source | Field | Type | Notes |
+|---|---|---|---|
+| `argv` | `--json` | bool flag | optional; default `false`; switches the per-file metadata line to a structured NDJSON record (schema_version = 1; see `docs/contracts/report-shape.md`) |
+| `argv` | `--report-fd <N>` | `i32` | optional; default `2` (stderr); overrides the report stream; `N == 1` is forbidden (would collide with the encoded bytes in single-file mode); non-writable fds rejected with usage + exit `2` |
+
 ## 3. Outputs
 
 | Channel | Content |
 |---|---|
-| stdout | single-line summary: `gallery-compress: <N> files in <DIR>: <IN_BYTES> -> <OUT_BYTES>` (preserved verbatim from v0) |
-| stderr | per-file error lines `<file>: <error>` (preserved verbatim from v0) + the v0 stderr trailer `(processed N candidates, K failed)` |
+| stdout | batch mode: single-line summary `convert-to-webp: <N> files in <DIR>: <IN_BYTES> -> <OUT_BYTES>` (preserved verbatim from v0); single-file mode: the encoded image bytes (raw; no header / framing) |
+| stderr | per-file error lines `<file>: <error>` (preserved verbatim from v0) + the v0 stderr trailer `(processed N candidates, K failed)` (preserved in batch mode); single-file mode metadata line in v0/DE-004 shape; with `--json`, the per-file NDJSON record on the configured report stream (default fd 2) per `docs/contracts/report-shape.md` |
 | exit code | `0` \| `1` \| `2` (see § 4) |
 
 ## 4. Invariants
@@ -82,3 +102,5 @@ Wave 1 additions (per ADR-0001):
 - Wave 2: add `--quality <n>`.
 - Wave 3: add `--resize <policy>`.
 - Wave 4: add `--dry-run`, `--keep-source`, `--jobs <N>`.
+- Wave 4 (DE-004): add `--single-file` mode (single-file stdin/stdout pipeline).
+- Wave 5 (DE-005): add `--json` and `--report-fd` flags; the NDJSON shape is governed by `contracts/report-shape.md`.

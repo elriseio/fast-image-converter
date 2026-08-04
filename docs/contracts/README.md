@@ -9,6 +9,7 @@
 | # | Contract | Document | Direction | Status |
 |---|---|---|---|---|
 | 1 | `codec-bounds` | `codec-bounds.md` | `format-codecs` ↔ `converter-core` | draft |
+| 2 | `report-shape` | `report-shape.md` | `cli-frontend` → `report-stream` (NDJSON; `--json` mode) | draft |
 
 ## Cross-References
 

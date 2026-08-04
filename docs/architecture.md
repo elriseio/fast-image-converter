@@ -110,6 +110,7 @@ For per-component contracts, failure modes, and invariants, see
 For component-to-component contracts, see `contracts/`:
 
 - `contracts/codec-bounds.md` (codec ↔ converter-core)
+- `contracts/report-shape.md` (NDJSON wire shape for `--json` mode; DE-005)
 - `contracts/README.md` (canonical registry)
 
 ## 6. External Dependencies
