@@ -82,27 +82,36 @@ TBD — populate on first regression report.
 
 ## 5. Active Defect
 
-### AD-001 — Hard-coded absolute host path in `src/main.rs:14-15`
-
-```
-const DEFAULT_GALLERY_BASE: &str =
-    "<absolute-host-path>/public/images/gallery";
-```
-
-**Severity**: Low (functional impact only if the operator runs the
-binary with a bare year argument on a different host).
-**Privacy impact**: leaks operator host layout in any source
-distribution.
-
-**Status**: queued for cleanup. Captured as `AR-002` for the developer
-role. Architect MUST NOT touch code.
-
-**Operator workaround**: always pass an absolute path or set
-`GALLERY_BASE` explicitly.
+_This section is intentionally empty after DE-006 closed AD-001._
 
 ## 6. Resolved Defect
 
-_This section is intentionally empty on first publish._
+### RD-001 — Hard-coded absolute host path (resolved by DE-006)
+
+The `DEFAULT_GALLERY_BASE` constant in `src/main.rs` carried an
+absolute host path (`/home/alex/Er/VFSite/vfatina-home/public/images/gallery`)
+that leaked operator host layout in source distributions and
+broke portability across hosts.
+
+**Resolution** (`DE-006`, commits `f9f940e` + `2deb935`):
+
+- The constant is removed. A positional argument that contains a
+  slash is used verbatim (the v0 contract for absolute paths is
+  preserved).
+- A bare positional argument (e.g. `2025`) now requires
+  `GALLERY_BASE` to be set; if unset, the binary prints a usage
+  message and exits `2`.
+- The README `Environment` table is updated: `GALLERY_BASE` is
+  documented as optional with no built-in default.
+- No new dependencies were introduced.
+
+**Verification**: `grep -rIn '/home/alex\|/Users' src/` returns
+no matches; `cargo build --release` succeeds; `cargo run --
+/tmp/some-abs-path` exits `0` on a valid directory and `1` on a
+missing one; `cargo test` is green.
+
+**Provenance**: `Issues/done/developer/DE-006_remove_hard_coded_host_path_reopen.md`,
+proposal `Issues/done/architect/AR-002_remove_hard_coded_host_path.md`.
 
 ## 7. Source Refs
 
