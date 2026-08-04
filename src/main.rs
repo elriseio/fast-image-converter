@@ -17,8 +17,6 @@ use format::{
 use params::parse_resize;
 
 const BINARY_NAME: &str = "convert-to-webp";
-const DEFAULT_GALLERY_BASE: &str =
-    "/home/alex/Er/VFSite/vfatina-home/public/images/gallery";
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 enum CliError {
@@ -225,12 +223,26 @@ fn main() -> ExitCode {
             return run_single_file(&cli);
         }
     };
-    let gallery_base =
-        env::var("GALLERY_BASE").unwrap_or_else(|_| DEFAULT_GALLERY_BASE.to_string());
 
     let dir: PathBuf = if dir.to_string_lossy().contains('/') {
         dir.clone()
     } else {
+        // Bare arg (e.g. a year like "2025"): require GALLERY_BASE.
+        // Per DE-006 / AR-002 the binary no longer carries a
+        // hard-coded absolute host path; the operator MUST set the
+        // environment variable explicitly or pass an absolute path.
+        let gallery_base = match env::var("GALLERY_BASE") {
+            Ok(v) if !v.is_empty() => v,
+            _ => {
+                eprintln!(
+                    "{BINARY_NAME}: bare argument {:?} requires GALLERY_BASE to be set \
+                     (or pass an absolute path).",
+                    dir
+                );
+                print_usage();
+                return ExitCode::from(2);
+            }
+        };
         PathBuf::from(&gallery_base).join(dir)
     };
 
@@ -1082,7 +1094,9 @@ fn print_usage() {
          \x20 cat input.jpg | convert-to-webp --single-file --output-format webp --json > out.webp 2> report.jsonl\n\
          \n\
          Env:\n\
-         \x20 GALLERY_BASE  default: {DEFAULT_GALLERY_BASE}"
+         \x20 GALLERY_BASE  optional; when set, used as the parent directory for a bare\n\
+         \x20                positional argument (e.g. a year like \"2025\"). Has no built-in\n\
+         \x20                default; pass an absolute path or set GALLERY_BASE."
     );
 }
 
