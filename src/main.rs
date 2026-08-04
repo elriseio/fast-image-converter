@@ -6,6 +6,7 @@ use std::process::ExitCode;
 use rayon::prelude::*;
 
 mod format;
+mod params;
 use format::{
     CodecImpl, Format, JpegToPng, JpegToWebp, PngToJpeg, PngToWebp, WebpToJpeg,
     WebpToPng,
