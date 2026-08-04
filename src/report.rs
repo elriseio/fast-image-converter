@@ -1,9 +1,9 @@
-//! Structured JSON output mode (DE-005).
+//! Structured JSON output mode.
 //!
-//! Per DE-005 § 2 the `--json` flag switches the per-file metadata
-//! line to an NDJSON record (one JSON object per line). The shape
-//! is stable, documented in `docs/contracts/report-shape.md`, and
-//! versioned via `schema_version`.
+//! The `--json` flag switches the per-file metadata line to an
+//! NDJSON record (one JSON object per line). The shape is stable,
+//! documented in `docs/contracts/report-shape.md`, and versioned via
+//! `schema_version`.
 //!
 //! The encoder is hand-rolled (no `serde` dependency) per
 //! `docs/architecture.md` § 6 External Dependencies: the release

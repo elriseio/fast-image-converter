@@ -1,10 +1,10 @@
 //! Golden-batch regression test for the v0 default pipeline.
 //!
-//! Per ADR-0002 the v0 `gallery-compress` pipeline (JPG -> WebP,
-//! portrait 800 / landscape 1000, quality 85) is preserved bit-for-bit
-//! when the binary is invoked without flags. The fixtures under
-//! `tests/fixtures/golden_v0/` are a fixed 10-file mixed-orientation
-//! JPG batch; the recorded WebP outputs under
+//! Per the v0 baseline the `gallery-compress` pipeline (JPG ->
+//! WebP, portrait 800 / landscape 1000, quality 85) is preserved
+//! bit-for-bit when the binary is invoked without flags. The
+//! fixtures under `tests/fixtures/golden_v0/` are a fixed 10-file
+//! mixed-orientation JPG batch; the recorded WebP outputs under
 //! `tests/fixtures/golden_v0/expected/` were captured on the
 //! reference host (libwebp `GOLDEN_LIBWEBP_VERSION`). This test
 //! runs the binary on the batch and asserts:
@@ -15,7 +15,7 @@
 //! 3. each output WebP starts with the RIFF/WEBP magic header
 //! 4. the per-file output bytes are byte-equivalent to the
 //!    recorded golden within the 0.1 % tolerance documented in
-//!    `README.md` and `adr/0002` (DE-002 AC-3)
+//!    `README.md` and `adr/0002`
 //!
 //! On byte-equivalence failure the test prints the host `libwebp`
 //! version via `pkg-config --modversion libwebp` so future ABI
@@ -32,10 +32,10 @@
 //! (determinism across two runs) AND the cross-host drift (output
 //! vs the recorded golden at the recorded libwebp version).
 //!
-//! AR-009: the canonical target is `fast-image-converter`; the
-//! legacy names (`convert-to-webp`, `gallery-compress`) survive
-//! as forwarders. The integration tests assert behaviour through
-//! the canonical target; alias coverage lives in
+//! The canonical target is `fast-image-converter`; the legacy
+//! names (`convert-to-webp`, `gallery-compress`) survive as
+//! forwarders. The integration tests assert behaviour through the
+//! canonical target; alias coverage lives in
 //! `tests/alias_forwarding.rs`.
 
 use std::fs;
@@ -63,12 +63,12 @@ fn fixtures() -> PathBuf {
 }
 
 fn binary() -> &'static str {
-    // AR-009 AC-5: integration tests target the canonical
-    // `fast-image-converter` binary; the legacy names survive as
-    // forwarders and are covered by `tests/alias_forwarding.rs`.
-    // Cargo emits `CARGO_BIN_EXE_<bin>` with the literal hyphenated
-    // bin name (it does not normalise hyphens to underscores for
-    // these environment variables).
+    // Integration tests target the canonical `fast-image-converter`
+    // binary; the legacy names survive as forwarders and are
+    // covered by `tests/alias_forwarding.rs`. Cargo emits
+    // `CARGO_BIN_EXE_<bin>` with the literal hyphenated bin name
+    // (it does not normalise hyphens to underscores for these
+    // environment variables).
     env!("CARGO_BIN_EXE_fast-image-converter")
 }
 
@@ -90,7 +90,7 @@ fn seed_run_dir(src: &Path, dst: &Path) {
         let from = entry.path();
         if !from.is_file() {
             // `fs::copy` refuses directories; the `expected/`
-            // subdir added by DE-002 is the live example.
+            // subdir is the live example.
             continue;
         }
         let to = dst.join(entry.file_name());
@@ -189,10 +189,9 @@ fn default_pipeline_exits_zero_on_golden_batch() {
         status.success(),
         "default pipeline must exit 0; got {status:?}\nstdout: {stdout}\nstderr: {stderr}"
     );
-    // AR-009 AC-6: the canonical summary line carries the canonical
-    // binary name. Legacy names only appear when the corresponding
-    // alias forwarder is invoked (covered by
-    // `tests/alias_forwarding.rs`).
+    // The canonical summary line carries the canonical binary
+    // name. Legacy names only appear when the corresponding alias
+    // forwarder is invoked (covered by `tests/alias_forwarding.rs`).
     assert!(
         stdout.contains("fast-image-converter:"),
         "summary line missing the canonical binary name prefix: {stdout}"
@@ -368,13 +367,13 @@ fn assert_bytes_within_tolerance(actual: &[u8], expected: &[u8], label: &str) {
 
 #[test]
 fn default_pipeline_matches_golden_batch_within_tolerance() {
-    // DE-002 AC-3: per-file byte equivalence within 0.1 % against
-    // the recorded golden under tests/fixtures/golden_v0/expected/.
-    // The recorded golden was captured on the host whose libwebp
-    // version is GOLDEN_LIBWEBP_VERSION. The 0.1 % tolerance
-    // absorbs minor libwebp ABI drift across host upgrades; a
-    // larger drift requires re-recording the golden (see the
-    // module-level docstring for the re-record procedure).
+    // Per-file byte equivalence within 0.1 % against the recorded
+    // golden under tests/fixtures/golden_v0/expected/. The recorded
+    // golden was captured on the host whose libwebp version is
+    // GOLDEN_LIBWEBP_VERSION. The 0.1 % tolerance absorbs minor
+    // libwebp ABI drift across host upgrades; a larger drift
+    // requires re-recording the golden (see the module-level
+    // docstring for the re-record procedure).
     let fixtures = fixtures();
     let expected_dir = fixtures.join("expected");
     assert!(
@@ -430,11 +429,12 @@ fn default_pipeline_matches_golden_batch_within_tolerance() {
     );
 }
 
-// ---- DE-003 AC-1 / AC-3 / AC-4 / AC-5: new flag combos ----
+// ---- New flag combos ----
 
 #[test]
 fn quality_flag_changes_output_bytes() {
-    // DE-003 AC-1: --quality 50 vs --quality 90 → different output bytes.
+    // --quality 50 vs --quality 90 must produce different output
+    // bytes; otherwise the flag would be a no-op.
     let fixtures = fixtures();
     let run50 = make_run_dir("q50");
     seed_run_dir(&fixtures, &run50);
@@ -467,7 +467,7 @@ fn quality_flag_changes_output_bytes() {
 
 #[test]
 fn resize_none_preserves_native_dimensions() {
-    // DE-003 AC-3: --resize none → output at native dimensions.
+    // --resize none must round-trip at native dimensions.
     let fixtures = fixtures();
     let run = make_run_dir("none");
     seed_run_dir(&fixtures, &run);
@@ -488,10 +488,10 @@ fn resize_none_preserves_native_dimensions() {
 
 #[test]
 fn resize_cap_caps_width() {
-    // DE-003 AC-4: --resize cap=1024 → output width <= 1024 for both
+    // --resize cap=1024 must produce output width <= 1024 for both
     // orientations (small fixtures are already < 1024 so this is a
-    // dimension-shape check; the policy logic is unit-tested separately
-    // in format::tests::resize_policy_target_width_is_correct).
+    // dimension-shape check; the policy logic is unit-tested
+    // separately in format::tests::resize_policy_target_width_is_correct).
     let fixtures = fixtures();
     let run = make_run_dir("cap");
     seed_run_dir(&fixtures, &run);
@@ -511,9 +511,9 @@ fn resize_cap_caps_width() {
 
 #[test]
 fn resize_auto_default_matches_golden_batch() {
-    // DE-003 AC-5: --resize auto:portrait=800,landscape=1000 must match
-    // the v0 default pipeline byte-for-byte (within the 0.1 % libwebp
-    // tolerance already enforced by DE-002).
+    // --resize auto:portrait=800,landscape=1000 must match the v0
+    // default pipeline byte-for-byte (within the 0.1 % libwebp
+    // tolerance already enforced by the golden-batch test).
     let fixtures = fixtures();
     let expected_dir = fixtures.join("expected");
     let run = make_run_dir("auto");

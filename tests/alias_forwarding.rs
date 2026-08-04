@@ -1,8 +1,7 @@
-//! AR-009 AC-3 / AC-4: compatibility alias coverage.
+//! Compatibility alias coverage.
 //!
-//! Per ADR-0003 § Decision § 3 / § 4 the legacy names
-//! `convert-to-webp` and `gallery-compress` survive as thin
-//! forwarders. They must:
+//! The legacy names `convert-to-webp` and `gallery-compress`
+//! survive as thin forwarders. They must:
 //!
 //! 1. Forward arguments unchanged to the canonical
 //!    `fast-image-converter` binary.

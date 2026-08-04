@@ -15,12 +15,11 @@ use format::{
 };
 use params::parse_resize;
 
-// AR-009 AC-6: runtime error prefixes and the usage banner use the
-// canonical product name. Compatibility aliases
-// (`convert-to-webp`, `gallery-compress`) live in `src/bin/*.rs`
-// and forward into this binary; the aliases themselves emit their
-// own one-line deprecation hint on stderr per ADR-0003 § Decision
-// § 3 / § 4.
+// Runtime error prefixes and the usage banner use the canonical
+// product name. Compatibility aliases (`convert-to-webp`,
+// `gallery-compress`) live in `src/bin/*.rs` and forward into this
+// binary; the aliases themselves emit their own one-line
+// deprecation hint on stderr before spawning the canonical binary.
 const BINARY_NAME: &str = "fast-image-converter";
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -41,7 +40,7 @@ enum Mode {
     Batch { dir: PathBuf },
     /// Single-file mode: bytes are read from stdin, encoded bytes are
     /// written to stdout, and a single metadata line is emitted on
-    /// stderr. See DE-004.
+    /// stderr.
     SingleFile,
 }
 
@@ -54,23 +53,23 @@ struct Cli {
     resize: Option<crate::format::ResizePolicy>,
     keep_source: bool,
     /// Emit the per-file metadata line as a structured NDJSON
-    /// record instead of the v0 key=value shape. Per DE-005.
+    /// record instead of the v0 key=value shape.
     json: bool,
     /// File descriptor the per-file report stream is written to.
     /// Defaults to 2 (stderr). Override with `--report-fd <N>`;
     /// N=1 is forbidden (would collide with the encoded bytes in
     /// single-file mode) and non-writable fds are rejected with
-    /// usage + exit 2. Per DE-005 AC-7.
+    /// usage + exit 2.
     report_fd: i32,
 }
 
 /// Bounded context shared by every per-file report emitter. Bundles
 /// the fields that are identical across the success and failure
 /// paths (CLI flags, formats, params, wall-time) so the emitter
-/// signatures stay below clippy's seven-argument limit (AR-004
-/// AC-3). The struct is `Copy`-friendly because every field is
-/// small and trivially cloneable; callers that already hold `&Cli`
-/// pass a single reference instead of four loose parameters.
+/// signatures stay below clippy's seven-argument limit. The struct
+/// is `Copy`-friendly because every field is small and trivially
+/// cloneable; callers that already hold `&Cli` pass a single
+/// reference instead of four loose parameters.
 #[derive(Copy, Clone)]
 struct ReportContext<'a> {
     cli: &'a Cli,
@@ -226,8 +225,8 @@ fn main() -> ExitCode {
         }
     };
 
-    // Per DE-005 AC-7: N=1 is forbidden; values other than 1, 2,
-    // or a writable integer fd are rejected with usage + exit 2.
+    // N=1 is forbidden; values other than 1, 2, or a writable
+    // integer fd are rejected with usage + exit 2.
     if let Err(msg) = validate_report_fd(cli.report_fd) {
         eprintln!("{BINARY_NAME}: {msg}");
         print_usage();
@@ -245,9 +244,9 @@ fn main() -> ExitCode {
         dir.clone()
     } else {
         // Bare arg (e.g. a year like "2025"): require GALLERY_BASE.
-        // Per DE-006 / AR-002 the binary no longer carries a
-        // hard-coded absolute host path; the operator MUST set the
-        // environment variable explicitly or pass an absolute path.
+        // The binary does not carry a hard-coded absolute host path;
+        // the operator MUST set the environment variable explicitly
+        // or pass an absolute path.
         let gallery_base = match env::var("GALLERY_BASE") {
             Ok(v) if !v.is_empty() => v,
             _ => {
@@ -326,10 +325,9 @@ fn main() -> ExitCode {
     let total_out = AtomicU64::new(0);
     let failed = AtomicU64::new(0);
 
-    // Bounded report context template (AR-004 AC-3). The closure
-    // re-derives a per-candidate ctx because `duration_ms` varies
-    // per file; everything else is captured from the surrounding
-    // scope.
+    // Bounded report context template. The closure re-derives a
+    // per-candidate ctx because `duration_ms` varies per file;
+    // everything else is captured from the surrounding scope.
     let ctx_template = ReportContext {
         cli: &cli,
         input_format,
@@ -341,11 +339,11 @@ fn main() -> ExitCode {
     candidates.par_iter().for_each(|src| {
         let started = Instant::now();
         let dst = src.with_extension(codec.output_extension());
-        // AR-006 AC-2: reject oversized source files BEFORE decode so
-        // the rayon worker never reads past the per-file byte limit.
-        // The check uses `fs::metadata` (no I/O on the source bytes),
-        // so the bound is enforced without spending time or memory
-        // on the actual payload.
+        // Reject oversized source files BEFORE decode so the rayon
+        // worker never reads past the per-file byte limit. The check
+        // uses `fs::metadata` (no I/O on the source bytes), so the
+        // bound is enforced without spending time or memory on the
+        // actual payload.
         let conv = fs::metadata(src)
             .map_err(|e| crate::format::CodecError::Io(e.to_string()))
             .and_then(|m| {
@@ -357,13 +355,13 @@ fn main() -> ExitCode {
             Ok(r) => (r.in_bytes, r.out_bytes),
             Err(_) => (0, 0),
         };
-        // Per DE-005 § 2 the JSON mode emits one NDJSON record per
-        // candidate in completion order (independent lines, no
-        // enclosing array). Emitted from inside the parallel
-        // iterator so each candidate's line lands as soon as it
-        // finishes; eprintln! acquires the stderr lock per call so
-        // the JSON lines do not interleave even though rayon runs
-        // the closure concurrently.
+        // JSON mode emits one NDJSON record per candidate in
+        // completion order (independent lines, no enclosing array).
+        // Emitted from inside the parallel iterator so each
+        // candidate's line lands as soon as it finishes; eprintln!
+        // acquires the stderr lock per call so the JSON lines do
+        // not interleave even though rayon runs the closure
+        // concurrently.
         let ctx = ReportContext {
             duration_ms,
             ..ctx_template
@@ -442,9 +440,8 @@ fn has_accepted_extension(p: &Path, accepted: &'static [&'static str]) -> bool {
 
 /// Single-file mode: read all of stdin, decode via the chosen codec,
 /// encode with the supplied params, and write the encoded bytes to
-/// stdout. The metadata line on stderr lands in DE-004 commit 3; this
-/// helper only establishes the read/write plumbing and exit-code
-/// contract.
+/// stdout. This helper establishes the read/write plumbing, the
+/// per-file metadata line on stderr, and the exit-code contract.
 fn run_single_file(cli: &Cli) -> ExitCode {
     use std::io::{Read, Write};
     use std::time::Instant;
@@ -490,17 +487,17 @@ fn run_single_file(cli: &Cli) -> ExitCode {
     if let Some(r) = cli.resize {
         params.resize = r;
     }
-    // keep_source is silently ignored in single-file mode (no source
-    // filesystem path to preserve; DE-004 §2 Scope).
+    // keep_source is silently ignored in single-file mode (no
+    // source filesystem path to preserve).
 
     let started = Instant::now();
     let mut in_bytes_buf = Vec::new();
-    // AR-006 AC-1: bound stdin at `MAX_STDIN_BYTES + 1` so an
-    // oversized payload is detected without reading it fully into
-    // memory. `take(MAX+1)` stops the read once that many bytes are
-    // observed; the `+1` lets us distinguish "exactly MAX" (allowed)
-    // from "at least MAX+1" (rejected). The Vec may still grow up to
-    // MAX+1 bytes, which is well within the binary's working set.
+    // Bound stdin at `MAX_STDIN_BYTES + 1` so an oversized payload
+    // is detected without reading it fully into memory. `take(MAX+1)`
+    // stops the read once that many bytes are observed; the `+1`
+    // lets us distinguish "exactly MAX" (allowed) from "at least
+    // MAX+1" (rejected). The Vec may still grow up to MAX+1 bytes,
+    // which is well within the binary's working set.
     let stdin_limit = crate::format::MAX_STDIN_BYTES.saturating_add(1);
     let read_result = std::io::stdin()
         .take(stdin_limit)
@@ -575,12 +572,12 @@ fn run_single_file(cli: &Cli) -> ExitCode {
         }
     };
 
-    // AR-006 AC-3 / AC-4: reject oversized decoded dimensions before
-    // any allocation that depends on width * height. The codecs'
-    // checked_pixel_capacity helper enforces the same bound at the
-    // allocation site (see src/format.rs); this early check produces
-    // a single, well-shaped report rather than a chain of partial
-    // failures from inside the codec.
+    // Reject oversized decoded dimensions before any allocation
+    // that depends on width * height. The codecs'
+    // `checked_pixel_capacity` helper enforces the same bound at
+    // the allocation site (see src/format.rs); this early check
+    // produces a single, well-shaped report rather than a chain of
+    // partial failures from inside the codec.
     if let Err(msg) = crate::format::check_dimensions(img.width(), img.height()) {
         let ctx = ReportContext {
             cli,
@@ -686,7 +683,7 @@ fn run_single_file(cli: &Cli) -> ExitCode {
 }
 
 /// Emit the single-line metadata record on stderr in single-file
-/// mode. Shape per DE-004 § 5:
+/// mode:
 ///
 ///   status=<ok|err> in_bytes=<N> out_bytes=<N> duration_ms=<N> error=<message>
 ///
@@ -712,13 +709,14 @@ fn emit_single_file_metadata(
 }
 
 /// Emit the success-path single-file report on stderr. When
-/// `--json` is set, emits a structured NDJSON record per DE-005
-/// § 2 (one JSON object per line). Otherwise falls back to the
-/// v0 key=value shape emitted by `emit_single_file_metadata`.
+/// `--json` is set, emits a structured NDJSON record (one JSON
+/// object per line). Otherwise falls back to the v0 key=value
+/// shape emitted by `emit_single_file_metadata`.
 ///
 /// Failure paths in single-file mode still use
-/// `emit_single_file_metadata` directly; they are migrated to a
-/// JSON-capable dispatcher in commit 3 (per DE-005 § 4).
+/// `emit_single_file_metadata` directly; they are routed through
+/// the JSON-capable dispatcher in `emit_single_file_failure_report`
+/// below.
 fn emit_single_file_success_report(
     ctx: &ReportContext,
     in_bytes: u64,
@@ -766,17 +764,17 @@ fn emit_single_file_success_report(
 }
 
 /// Emit a failure-path single-file report on stderr. When `--json`
-/// is set, emits a structured NDJSON record per DE-005 § 2 with
-/// `status: "err"` and the documented `error` block. Otherwise
-/// falls back to the v0 key=value shape with the kind prefix
-/// (`decode error:`, `encode error:`, or `io error:`).
+/// is set, emits a structured NDJSON record with `status: "err"`
+/// and the documented `error` block. Otherwise falls back to the
+/// v0 key=value shape with the kind prefix (`decode error:`,
+/// `encode error:`, or `io error:`).
 ///
 /// `input_dims` / `output_dims` are `None` when the corresponding
 /// data is not known (decode failure → no output dims; encode
 /// failure → output dims are zero; pre-decode failure → both
 /// `None`). `in_bytes` / `out_bytes` of 0 produce `null` blocks
-/// in the JSON record (per AC-4: "output fields are present but
-/// zeroed where not meaningful").
+/// in the JSON record so output fields are present but zeroed
+/// where not meaningful.
 fn emit_single_file_failure_report(
     ctx: &ReportContext,
     in_bytes: u64,
@@ -875,9 +873,9 @@ fn host_meta() -> crate::report::HostMeta {
     }
 }
 
-/// Validate the `--report-fd` argument per DE-005 AC-7. Returns
-/// `Ok(())` if `fd` is an acceptable report stream, `Err(msg)`
-/// otherwise. The accepted set is:
+/// Validate the `--report-fd` argument. Returns `Ok(())` if `fd`
+/// is an acceptable report stream, `Err(msg)` otherwise. The
+/// accepted set is:
 ///
 /// - `fd == 2` (the conventional stderr fd); accepted without
 ///   further checks (the runtime may have closed stderr; if so,
@@ -924,10 +922,10 @@ fn validate_report_fd(fd: i32) -> Result<(), String> {
     Ok(())
 }
 
-/// Low-level writer abstraction used by `retry_write_all` (AR-007
-/// AC-3). The real implementation wraps `libc::write(2)`; tests
-/// inject a `MockReportWriter` that simulates EINTR / EAGAIN /
-/// partial-write behaviour without timing races.
+/// Low-level writer abstraction used by `retry_write_all`. The
+/// real implementation wraps `libc::write(2)`; tests inject a
+/// `MockReportWriter` that simulates EINTR / EAGAIN / partial-write
+/// behaviour without timing races.
 ///
 /// SAFETY CONTRACT: the implementer MUST treat `buf` as
 /// read-only memory that the caller continues to own. The
@@ -944,12 +942,12 @@ struct LibcFdWriter(i32);
 impl ReportFdWriter for LibcFdWriter {
     fn write(&mut self, buf: &[u8]) -> std::io::Result<usize> {
         // SAFETY: `self.0` is a file descriptor that was validated
-        // for write access by `validate_report_fd` (DE-005 AC-7);
-        // `buf.as_ptr()` points at `buf.len()` readable bytes for
-        // the duration of the call (the borrow lives for the
-        // expression). `libc::write(2)` does not mutate the buffer
-        // and the kernel never retains the pointer past return,
-        // so the temporary pointer cast is sound.
+        // for write access by `validate_report_fd`; `buf.as_ptr()`
+        // points at `buf.len()` readable bytes for the duration of
+        // the call (the borrow lives for the expression).
+        // `libc::write(2)` does not mutate the buffer and the
+        // kernel never retains the pointer past return, so the
+        // temporary pointer cast is sound.
         let n = unsafe { libc::write(self.0, buf.as_ptr() as *const _, buf.len()) };
         if n < 0 {
             Err(std::io::Error::last_os_error())
@@ -977,7 +975,7 @@ const MAX_EAGAIN_RETRIES: u32 = 16;
 /// On persistent EAGAIN the loop backs off with exponential delay
 /// up to 1 ms per attempt. The retry counts are bounded by
 /// `MAX_EINTR_RETRIES` and `MAX_EAGAIN_RETRIES` so the call cannot
-/// spin indefinitely (AR-007 AC-2).
+/// spin indefinitely.
 ///
 /// Returns `Ok(())` only when every byte of `buf` has been written.
 /// Other `io::Error`s are returned to the caller without retry;
@@ -1047,9 +1045,9 @@ fn retry_write_all<W: ReportFdWriter>(writer: &mut W, buf: &[u8]) -> std::io::Re
 /// files / pipes; the mutex is the portable line-atomicity
 /// guarantee we provide).
 ///
-/// Writes to non-stderr fds go through `retry_write_all` (AR-007
-/// AC-1: EINTR retried, partial writes retried, bounded EAGAIN
-/// retries; AC-2: no unbounded spin).
+/// Writes to non-stderr fds go through `retry_write_all` (EINTR
+/// retried, partial writes retried, bounded EAGAIN retries; no
+/// unbounded spin).
 fn emit_report_line(fd: i32, line: &str) {
     if fd == 2 {
         eprintln!("{}", line);
@@ -1096,9 +1094,9 @@ fn codec_error_kind(e: &crate::format::CodecError) -> crate::report::ErrorKind {
 }
 
 /// Emit one NDJSON line for a successful batch-mode conversion.
-/// Called from inside the rayon parallel iterator; per DE-005 § 2
-/// the line is emitted as soon as the candidate finishes, in
-/// completion order (no enclosing array).
+/// Called from inside the rayon parallel iterator; the line is
+/// emitted as soon as the candidate finishes, in completion order
+/// (no enclosing array).
 fn emit_batch_record_success(
     ctx: &ReportContext,
     src: &Path,
@@ -1130,7 +1128,7 @@ fn emit_batch_record_success(
     };
     // `src` is intentionally not embedded in the per-file record;
     // the caller's NDJSON line index identifies the file in
-    // completion order (per DE-005 § 2).
+    // completion order.
     let _ = src;
     emit_report_line(ctx.cli.report_fd, &r.to_json());
 }
@@ -1219,12 +1217,12 @@ fn emit_batch_record_io_failure(
 }
 
 fn print_usage() {
-    // AR-009 AC-7: the canonical usage banner names
-    // `fast-image-converter`. The legacy names appear only in the
-    // aliases list (so operators discovering the binary via
-    // `convert-to-webp --help` or `gallery-compress --help` still
-    // learn about their deprecation; the aliases invoke the
-    // canonical binary after printing their own deprecation hint).
+    // The canonical usage banner names `fast-image-converter`. The
+    // legacy names appear only in the aliases list (so operators
+    // discovering the binary via `convert-to-webp --help` or
+    // `gallery-compress --help` still learn about their deprecation;
+    // the aliases invoke the canonical binary after printing their
+    // own deprecation hint).
     eprintln!(
         "Usage: fast-image-converter <dir> [--input-format <fmt>] [--output-format <fmt>]\n\
          \x20                                [--quality <1..100>] [--resize <policy>] [--keep-source]\n\
@@ -1292,8 +1290,8 @@ mod cli_tests {
 
     #[test]
     fn parses_default_invocation() {
-        // AR-009 AC-6: CLI parsing uses the canonical argv[0]
-        // name; alias coverage lives in `tests/alias_forwarding.rs`.
+        // CLI parsing uses the canonical argv[0] name; alias
+        // coverage lives in `tests/alias_forwarding.rs`.
         let cli = parse_cli(&v(&["fast-image-converter", "/tmp/x"])).unwrap();
         assert_eq!(
             cli.mode,
@@ -1382,10 +1380,10 @@ mod cli_tests {
 
     #[test]
     fn parse_cli_ignores_argv_zero_for_aliases() {
-        // AR-009 AC-3 / AC-4: parse_cli must accept any argv[0]
-        // (the alias forwarders spawn this binary with their own
-        // argv[0]). Behaviour must be identical across the
-        // canonical name and both legacy names.
+        // parse_cli must accept any argv[0] (the alias forwarders
+        // spawn this binary with their own argv[0]). Behaviour must
+        // be identical across the canonical name and both legacy
+        // names.
         let canonical = parse_cli(&v(&["fast-image-converter", "/tmp/x"])).unwrap();
         let ctw = parse_cli(&v(&["convert-to-webp", "/tmp/x"])).unwrap();
         let gc = parse_cli(&v(&["gallery-compress", "/tmp/x"])).unwrap();
@@ -1410,12 +1408,12 @@ mod cli_tests {
     }
 }
 
-// AR-007 AC-3: tests exercise partial / interrupted / non-blocking
-// write behaviour through the `ReportFdWriter` abstraction, without
-// relying on kernel-level timing races. The mock is a deterministic
-// state machine: each call to `write()` returns the next scripted
-// outcome, then advances. EINTR and EAGAIN are explicit so the
-// retry counts are observable.
+// Tests exercise partial / interrupted / non-blocking write behaviour
+// through the `ReportFdWriter` abstraction, without relying on
+// kernel-level timing races. The mock is a deterministic state
+// machine: each call to `write()` returns the next scripted outcome,
+// then advances. EINTR and EAGAIN are explicit so the retry
+// counts are observable.
 #[cfg(test)]
 mod report_fd_writer_tests {
     use super::*;

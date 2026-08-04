@@ -3,7 +3,7 @@ use std::path::Path;
 
 use crate::params::Params;
 
-/// Hard input-byte limits enforced before decode (AR-006 AC-1 / AC-2).
+/// Hard input-byte limits enforced before decode.
 ///
 /// The limits are conservative for a desktop / server CLI converting
 /// typical photo batches. Operators handling genuinely large images
@@ -21,7 +21,7 @@ use crate::params::Params;
 pub const MAX_STDIN_BYTES: u64 = 100 * 1024 * 1024;
 pub const MAX_BATCH_FILE_BYTES: u64 = MAX_STDIN_BYTES;
 
-/// Hard per-dimension limit enforced after decode (AR-006 AC-3).
+/// Hard per-dimension limit enforced after decode.
 ///
 /// Decoded images with width or height greater than this are rejected
 /// before any allocation arithmetic that depends on `width * height`.
@@ -31,7 +31,7 @@ pub const MAX_DIMENSION: u32 = 16384;
 
 /// Check an input byte count against the per-file limit. Returns an
 /// `Err` string suitable for inclusion in `CodecError::Io(_)` when
-/// the limit is exceeded (AR-006 AC-4: rejection must surface as a
+/// the limit is exceeded (rejection must surface as a
 /// deterministic runtime error, never a panic).
 pub(crate) fn check_input_size(bytes: u64) -> Result<(), String> {
     if bytes > MAX_BATCH_FILE_BYTES {
@@ -45,7 +45,8 @@ pub(crate) fn check_input_size(bytes: u64) -> Result<(), String> {
 }
 
 /// Check a decoded image's pixel dimensions against the per-dimension
-/// limit (AR-006 AC-3 / AC-4).
+/// limit (rejection must surface as a deterministic runtime
+/// error, never a panic).
 pub(crate) fn check_dimensions(width: u32, height: u32) -> Result<(), String> {
     if width > MAX_DIMENSION || height > MAX_DIMENSION {
         Err(format!(
@@ -61,7 +62,7 @@ pub(crate) fn check_dimensions(width: u32, height: u32) -> Result<(), String> {
 /// Returns `Err` when the product would overflow `usize` or when
 /// either dimension exceeds `MAX_DIMENSION`. Codecs that allocate a
 /// pixel buffer of size `w * h` MUST call this before allocating
-/// (AR-006 AC-3: every codec allocation site uses checked arithmetic).
+/// (every codec allocation site uses checked arithmetic).
 pub(crate) fn checked_pixel_capacity(width: u32, height: u32) -> Result<usize, CodecError> {
     check_dimensions(width, height).map_err(CodecError::Decode)?;
     width
@@ -155,21 +156,21 @@ pub trait Codec {
     fn decode(&self, src: &Path) -> Result<image::DynamicImage, CodecError>;
 
     /// Decode bytes that are already in memory (used by single-file
-    /// stdin mode in DE-004).
+    /// stdin mode).
     fn decode_bytes(&self, bytes: &[u8]) -> Result<image::DynamicImage, CodecError> {
         image::load_from_memory(bytes).map_err(|e| CodecError::Decode(e.to_string()))
     }
 
     /// Encode the decoded image into an in-memory byte buffer. This
-    /// method has no default implementation (AR-007 AC-5): every
-    /// concrete codec must build the bytes directly without going
-    /// through a temporary file. The previous default implementation
-    /// wrote to a path derived from `std::process::id()` in
+    /// method has no default implementation: every concrete codec
+    /// must build the bytes directly without going through a
+    /// temporary file. The previous default implementation wrote
+    /// to a path derived from `std::process::id()` in
     /// `std::env::temp_dir()` — predictable across concurrent
     /// conversions from the same process and removable by a
-    /// hostile actor with write access to `/tmp` (AR-007 AC-4).
-    /// Removing it forces every codec to allocate its own
-    /// `Vec<u8>` and eliminates the predictable temporary path.
+    /// hostile actor with write access to `/tmp`. Removing it
+    /// forces every codec to allocate its own `Vec<u8>` and
+    /// eliminates the predictable temporary path.
     fn encode_to_vec(&self, img: &image::DynamicImage, quality: u8) -> Result<Vec<u8>, CodecError>;
 
     /// Encode the decoded image to `dst` and return the number of bytes
@@ -846,11 +847,11 @@ mod tests {
         assert_eq!(p.target_width(800, 1200), 800); // portrait
     }
 
-    // AR-006 AC-6: exact-boundary success and one-byte-over failure
-    // for the per-file byte limit. Boundary cases are exercised at
-    // unit level (the helper is the source of truth) and at
-    // integration level (the binary bounds stdin via `take(MAX+1)`
-    // and batch mode via `fs::metadata().len()`).
+    // Exact-boundary success and one-byte-over failure for the
+    // per-file byte limit. Boundary cases are exercised at unit
+    // level (the helper is the source of truth) and at integration
+    // level (the binary bounds stdin via `take(MAX+1)` and batch
+    // mode via `fs::metadata().len()`).
     #[test]
     fn check_input_size_accepts_exact_boundary() {
         assert!(check_input_size(MAX_BATCH_FILE_BYTES).is_ok());
@@ -865,8 +866,8 @@ mod tests {
         );
     }
 
-    // AR-006 AC-6: exact-boundary success and one-pixel-over failure
-    // for the per-dimension limit.
+    // Exact-boundary success and one-pixel-over failure for the
+    // per-dimension limit.
     #[test]
     fn check_dimensions_accept_exact_boundary() {
         assert!(check_dimensions(MAX_DIMENSION, MAX_DIMENSION).is_ok());
@@ -884,8 +885,8 @@ mod tests {
         assert!(err.contains("exceed the per-dimension limit"), "{err}");
     }
 
-    // AR-006 AC-3: checked_pixel_capacity must surface dimension
-    // overflow before allocation. The `width * height` product for
+    // checked_pixel_capacity must surface dimension overflow
+    // before allocation. The `width * height` product for
     // `u32::MAX * u32::MAX` does not overflow `usize` on a 64-bit
     // host (the product sits just under `usize::MAX`), but the
     // dimension check still rejects it via `check_dimensions`.

@@ -1,10 +1,10 @@
-//! Integration tests for the `--json` structured output mode (DE-005).
+//! Integration tests for the `--json` structured output mode.
 //!
-//! Per `docs/contracts/report-shape.md` (and DE-005 § 2) the binary
-//! emits one NDJSON record per converted file when `--json` is set:
-//! one line total in `--single-file` mode, one line per candidate in
-//! batch mode. The shape is hand-rolled (no `serde` runtime dep) and
-//! versioned via `schema_version` (= 1).
+//! Per `docs/contracts/report-shape.md` the binary emits one NDJSON
+//! record per converted file when `--json` is set: one line total in
+//! `--single-file` mode, one line per candidate in batch mode. The
+//! shape is hand-rolled (no `serde` runtime dep) and versioned via
+//! `schema_version` (= 1).
 //!
 //! These tests exercise the binary as a black box: spawn it, capture
 //! the report stream, parse with `serde_json` (dev-dependency;
@@ -21,12 +21,12 @@ use std::process::{Command, Stdio};
 use serde_json::Value;
 
 fn binary() -> &'static str {
-    // AR-009 AC-5: integration tests target the canonical
-    // `fast-image-converter` binary; the legacy names survive as
-    // forwarders and are covered by `tests/alias_forwarding.rs`.
-    // Cargo emits `CARGO_BIN_EXE_<bin>` with the literal hyphenated
-    // bin name (it does not normalise hyphens to underscores for
-    // these environment variables).
+    // Integration tests target the canonical `fast-image-converter`
+    // binary; the legacy names survive as forwarders and are
+    // covered by `tests/alias_forwarding.rs`. Cargo emits
+    // `CARGO_BIN_EXE_<bin>` with the literal hyphenated bin name
+    // (it does not normalise hyphens to underscores for these
+    // environment variables).
     env!("CARGO_BIN_EXE_fast-image-converter")
 }
 
@@ -443,8 +443,8 @@ fn batch_json_without_input_dir_exits_nonzero_with_error_block() {
 
 #[test]
 fn single_file_without_json_emits_v0_key_value_line() {
-    // AC-8: without --json, the v0 / DE-004 behaviour is preserved
-    // (key=value on stderr in single-file mode).
+    // Without --json, the v0 behaviour is preserved (key=value on
+    // stderr in single-file mode).
     let input = fixture_jpeg();
     let (status, _stdout, stderr) =
         spawn(&["--single-file", "--output-format", "webp"], Some(&input));
@@ -466,10 +466,9 @@ fn single_file_without_json_emits_v0_key_value_line() {
 
 #[test]
 fn batch_without_json_preserves_v0_no_per_file_metadata_on_stderr() {
-    // AC-8 / v0: without --json, batch mode emits no per-file
-    // metadata on stderr (the v0 trailer `(processed N candidates,
-    // K failed)` is preserved; the candidate lines themselves
-    // are absent).
+    // Without --json, batch mode emits no per-file metadata on
+    // stderr (the v0 trailer `(processed N candidates, K failed)`
+    // is preserved; the candidate lines themselves are absent).
     let run = make_batch_run_dir("no-json");
     seed_with_jpegs(&fixtures(), &run);
     let child = Command::new(binary())

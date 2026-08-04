@@ -49,7 +49,7 @@ jobs:
           restore-keys: |
             ${{ runner.os }}-cargo-
 
-      - name: Install RustSec advisory scanner (binary, NOT a dev-dependency per AR-005 AC-3)
+      - name: Install RustSec advisory scanner (binary, NOT a dev-dependency)
         run: |
           cargo install --locked cargo-audit --version "^0.22"
 

@@ -54,23 +54,23 @@ jobs:
         run: |
           cargo install --locked cargo-audit --version "^0.22"
 
-      - name: Format check (AR-005 gate)
+      - name: Format check
         run: cargo fmt --all -- --check
 
-      - name: Strict Clippy (AR-005 gate)
+      - name: Strict Clippy
         run: cargo clippy --all-targets --all-features -- -D warnings
 
-      - name: Test (AR-005 gate)
+      - name: Test
         run: cargo test --all-targets --all-features
 
-      - name: Dependency advisory scan (AR-005 gate)
+      - name: Dependency advisory scan
         run: cargo audit --deny warnings
 
-      - name: Reject forbidden personal host paths (AR-008 AC-4)
+      - name: Reject forbidden personal host paths
         run: |
           set -euo pipefail
           if grep -rInE '/home/alex|/Users/alex' src/ tests/ docs/ scripts/ Cargo.toml Cargo.lock build.rs Makefile rust-toolchain.toml README.md 2>/dev/null; then
-            echo "::error::forbidden personal host path detected in tracked source (AR-008 AC-4)"
+            echo "::error::forbidden personal host path detected in tracked source"
             exit 1
           fi
           echo "no forbidden personal host paths found in tracked source"
@@ -111,12 +111,12 @@ jobs:
       - name: Build release binaries
         run: cargo build --release --bins
 
-      - name: Measure binary sizes (AR-008 AC-1, AR-010 AC-2)
+      - name: Measure binary sizes
         id: sizes
         run: |
           set -euo pipefail
-          # AR-010 AC-2: the canonical `fast-image-converter` is the
-          # primary release artefact. The two compatibility aliases
+          # The canonical `fast-image-converter` is the primary
+          # release artefact. The two compatibility aliases
           # (`convert-to-webp`, `gallery-compress`) ship alongside
           # it as documented compatibility assets.
           canonical_size=$(stat -c '%s' target/release/fast-image-converter)
@@ -129,19 +129,18 @@ jobs:
           echo "deprecated_size=${deprecated_size}" >> "$GITHUB_OUTPUT"
           echo "legacy_size=${legacy_size}" >> "$GITHUB_OUTPUT"
 
-      - name: Generate SHA-256 checksums (AR-008 AC-3, AR-010 AC-3)
+      - name: Generate SHA-256 checksums
         run: |
           set -euo pipefail
-          # AR-010 AC-3: the checksum file uses the actual
-          # published filenames. The canonical binary is listed
-          # first; the compatibility aliases follow in alphabetical
-          # order so the manifest + checksums read top-to-bottom
-          # in the same order.
+          # The checksum file uses the actual published filenames.
+          # The canonical binary is listed first; the compatibility
+          # aliases follow in alphabetical order so the manifest +
+          # checksums read top-to-bottom in the same order.
           cd target/release
           sha256sum fast-image-converter convert-to-webp gallery-compress > SHA256SUMS
           cat SHA256SUMS
 
-      - name: Build manifest (AR-008 AC-3, AR-010 AC-2)
+      - name: Build manifest
         run: |
           set -euo pipefail
           version=$(awk -F\" '/^version/ {print $2; exit}' Cargo.toml)
@@ -165,14 +164,13 @@ jobs:
           } > target/release/build-manifest.txt
           cat target/release/build-manifest.txt
 
-      - name: Smoke test (AR-008 AC-5, AR-010 AC-4)
+      - name: Smoke test
         run: |
           set -euo pipefail
-          # AR-010 AC-4: the canonical binary runs the full
-          # batch + single-file round-trip; both compatibility
-          # aliases must forward to it (same exit code, same
-          # outputs) without surfacing as canonical in their
-          # own runtime help.
+          # The canonical binary runs the full batch + single-file
+          # round-trip; both compatibility aliases must forward to
+          # it (same exit code, same outputs) without surfacing as
+          # canonical in their own runtime help.
           ./target/release/fast-image-converter --help > /tmp/help.txt
           grep -q '^Usage: fast-image-converter' /tmp/help.txt
           # Build a tiny JPG fixture with ImageMagick and round-trip it.
@@ -196,15 +194,15 @@ jobs:
           test "$gc_rc" -eq 0
           rm -rf "$tmp" /tmp/out.webp /tmp/help.txt /tmp/ctw.err /tmp/gc.err
 
-      - name: Assemble release artefacts (AR-010 AC-1, AC-6)
+      - name: Assemble release artefacts
         run: |
           set -euo pipefail
           mkdir -p target/release-dir
-          # AR-010 AC-1 / AC-6: the canonical binary is published
-          # first; the compatibility aliases follow in alphabetical
-          # order. The artefact dir name preserves the literal
-          # binary names so operators can install any of the three
-          # via the documented install path.
+          # The canonical binary is published first; the
+          # compatibility aliases follow in alphabetical order. The
+          # artefact dir name preserves the literal binary names so
+          # operators can install any of the three via the
+          # documented install path.
           cp target/release/fast-image-converter target/release-dir/fast-image-converter
           cp target/release/convert-to-webp target/release-dir/convert-to-webp
           cp target/release/gallery-compress target/release-dir/gallery-compress
@@ -213,7 +211,7 @@ jobs:
           cp LICENSE target/release-dir/LICENSE
           ls -la target/release-dir/
 
-      - name: Publish GitHub release (AR-008 AC-3, AC-6; AR-010 AC-1, AC-6)
+      - name: Publish GitHub release
         uses: softprops/action-gh-release@v2
         with:
           generate_release_notes: true

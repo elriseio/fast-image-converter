@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Repository-native quality gate for fast-image-converter (AR-005).
+# Repository-native quality gate for fast-image-converter.
 #
 # Runs the same checks the CI workflow (.github/workflows/ci.yml)
 # runs: format, strict Clippy, full test suite, release build, and
@@ -16,8 +16,8 @@
 # The advisory step uses `cargo audit` from the
 # `RustSecurity/rustsec` project. `cargo audit` is installed as a
 # standalone binary via `cargo install --locked cargo-audit`; it is
-# deliberately NOT a Cargo.toml dev-dependency (AR-005 AC-3) so the
-# release binary stays free of audit-only build artefacts.
+# deliberately NOT a Cargo.toml dev-dependency so the release
+# binary stays free of audit-only build artefacts.
 #
 # Required host tools: rustup with the pinned toolchain in
 # `rust-toolchain.toml`, libwebp-dev, pkg-config, a C toolchain.

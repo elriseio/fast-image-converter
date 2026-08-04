@@ -1,11 +1,10 @@
-//! Single-file stdin/stdout mode integration tests (DE-004).
+//! Single-file stdin/stdout mode integration tests.
 //!
-//! Per DE-004 § 2 a single-file mode reads one image from stdin,
-//! encodes it via the chosen codec, and writes the encoded bytes to
-//! stdout. A single metadata line (`status=... in_bytes=... ...`)
-//! is emitted on stderr. The success path's stdout bytes must be
-//! byte-identical to the same conversion via batch mode (the golden
-//! reference recorded in DE-002).
+//! A single-file mode reads one image from stdin, encodes it via
+//! the chosen codec, and writes the encoded bytes to stdout. A
+//! single metadata line (`status=... in_bytes=... ...`) is emitted
+//! on stderr. The success path's stdout bytes must be byte-identical
+//! to the same conversion via batch mode (the golden reference).
 
 use std::fs;
 use std::io::Write;
@@ -13,12 +12,12 @@ use std::path::PathBuf;
 use std::process::{Command, Stdio};
 
 fn binary() -> &'static str {
-    // AR-009 AC-5: integration tests target the canonical
-    // `fast-image-converter` binary; the legacy names survive as
-    // forwarders and are covered by `tests/alias_forwarding.rs`.
-    // Cargo emits `CARGO_BIN_EXE_<bin>` with the literal hyphenated
-    // bin name (it does not normalise hyphens to underscores for
-    // these environment variables).
+    // Integration tests target the canonical `fast-image-converter`
+    // binary; the legacy names survive as forwarders and are
+    // covered by `tests/alias_forwarding.rs`. Cargo emits
+    // `CARGO_BIN_EXE_<bin>` with the literal hyphenated bin name
+    // (it does not normalise hyphens to underscores for these
+    // environment variables).
     env!("CARGO_BIN_EXE_fast-image-converter")
 }
 
@@ -72,8 +71,8 @@ fn png_pixel_dims(bytes: &[u8]) -> (u32, u32) {
 
 #[test]
 fn single_file_round_trip_matches_golden_batch() {
-    // DE-004 AC-1: `cat input.jpg | --single-file --output-format webp`
-    // produces a byte-identical WebP to the golden-batch reference.
+    // `cat input.jpg | --single-file --output-format webp` produces
+    // a byte-identical WebP to the golden-batch reference.
     let mut input = Vec::new();
     for entry in fs::read_dir(fixtures()).unwrap().flatten() {
         let p = entry.path();
@@ -103,9 +102,9 @@ fn single_file_round_trip_matches_golden_batch() {
 
 #[test]
 fn single_file_png_input_round_trip() {
-    // DE-004 AC-2: PNG -> WebP via stdin/stdout (multi-format path).
-    // Generate a minimal PNG in /tmp so the test doesn't depend on a
-    // non-golden PNG fixture.
+    // PNG -> WebP via stdin/stdout (multi-format path). Generate a
+    // minimal PNG in /tmp so the test doesn't depend on a non-golden
+    // PNG fixture.
     let tmp = std::env::temp_dir().join(format!(
         "fast-image-converter-single-file-png-{}.png",
         std::process::id()
@@ -137,7 +136,7 @@ fn single_file_png_input_round_trip() {
 
 #[test]
 fn single_file_webp_to_png_round_trip() {
-    // DE-004 AC-3: WebP -> PNG via stdin/stdout.
+    // WebP -> PNG via stdin/stdout.
     let webp = fs::read(expected_dir().join("portrait_256x384.webp")).unwrap();
     let (status, stdout, stderr) = run_single_file(
         &[
@@ -165,8 +164,8 @@ fn single_file_webp_to_png_round_trip() {
 
 #[test]
 fn single_file_non_image_produces_no_stdout_and_exit_one() {
-    // DE-004 AC-5: piping a non-image to stdin produces a documented
-    // error on stderr, exit 1, and no bytes on stdout.
+    // Piping a non-image to stdin produces a documented error on
+    // stderr, exit 1, and no bytes on stdout.
     let bad = vec![0u8; 1024];
     let (status, stdout, stderr) = run_single_file(&["--single-file"], &bad);
     assert_eq!(
@@ -191,7 +190,8 @@ fn single_file_non_image_produces_no_stdout_and_exit_one() {
 
 #[test]
 fn single_file_quality_flag_changes_output_bytes() {
-    // DE-004 AC-6: --quality 50 vs --quality 90 in single-file mode.
+    // --quality 50 vs --quality 90 in single-file mode must produce
+    // different output byte counts; otherwise the flag is a no-op.
     let src = fixtures().join("portrait_256x384.jpg");
     let input = fs::read(&src).unwrap();
     let (status50, out50, _) = run_single_file(&["--single-file", "--quality", "50"], &input);
@@ -207,10 +207,11 @@ fn single_file_quality_flag_changes_output_bytes() {
 
 #[test]
 fn single_file_resize_cap_is_honoured() {
-    // DE-004 AC-7: --resize cap=<W> in single-file mode.
-    // We do not have a >1024-wide golden fixture, so this test
-    // validates the metadata shape + a smaller cap=512 against the
-    // existing fixture (which is 384 wide, so it stays native).
+    // --resize cap=<W> in single-file mode must produce output
+    // width <= cap. We do not have a >1024-wide golden fixture, so
+    // this test validates the metadata shape + a smaller cap=512
+    // against the existing fixture (which is 384 wide, so it
+    // stays native).
     let src = fixtures().join("portrait_256x384.jpg");
     let input = fs::read(&src).unwrap();
     let (status, stdout, stderr) =
@@ -226,8 +227,8 @@ fn single_file_resize_cap_is_honoured() {
 
 #[test]
 fn single_file_metadata_line_shape() {
-    // DE-004 AC-4: the metadata line on stderr matches the documented
-    // shape (key=value pairs terminated by a newline).
+    // The metadata line on stderr matches the documented shape
+    // (key=value pairs terminated by a newline).
     let src = fixtures().join("portrait_256x384.jpg");
     let input = fs::read(&src).unwrap();
     let (_, _, stderr) = run_single_file(&["--single-file"], &input);
@@ -240,11 +241,11 @@ fn single_file_metadata_line_shape() {
     assert!(!line.contains("error="));
 }
 
-// AR-006 AC-6: oversized stdin must be rejected with exit 1 and a
-// deterministic error report (never a panic). The boundary is
-// enforced by `stdin().take(MAX_STDIN_BYTES + 1)`, so a payload of
-// exactly MAX+1 bytes of non-image data is rejected with the size
-// error rather than the decode error.
+// Oversized stdin must be rejected with exit 1 and a deterministic
+// error report (never a panic). The boundary is enforced by
+// `stdin().take(MAX_STDIN_BYTES + 1)`, so a payload of exactly MAX+1
+// bytes of non-image data is rejected with the size error rather
+// than the decode error.
 #[test]
 fn single_file_stdin_over_size_limit_rejected_with_exit_one() {
     // Build a payload of exactly MAX + 1 bytes; the `take` reader

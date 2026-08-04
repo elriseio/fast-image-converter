@@ -1,10 +1,9 @@
 [package]
-# AR-009: the canonical product and CLI is fast-image-converter. The
-# package metadata must match the canonical identity so downstream
-# tooling (`CARGO_BIN_EXE_fast-image-converter`, release artifact
-# names, package metadata) sees one stable identity. The legacy
-# names survive as thin forwarder binaries below; ADR-0003 captures
-# the migration contract.
+# Canonical product and CLI: fast-image-converter. Package metadata
+# must match the canonical identity so downstream tooling
+# (release artifact names, package metadata) sees one stable
+# identity. The legacy names survive as thin forwarder binaries
+# below.
 name = "fast-image-converter"
 version = "0.2.0"
 edition = "2021"
@@ -23,18 +22,18 @@ name = "fast-image-converter"
 path = "src/main.rs"
 
 [[bin]]
-# Deprecated compatibility alias for the v0 product name
-# (ADR-0003 § Decision § 3). Forwards arguments and exit status to
-# the canonical binary; emits a one-line deprecation hint on stderr.
+# Deprecated compatibility alias for the v0 product name.
+# Forwards arguments and exit status to the canonical binary and
+# emits a one-line deprecation hint on stderr before invoking it.
 # The forwarder source is `src/bin/convert-to-webp.rs`.
 name = "convert-to-webp"
 path = "src/bin/convert-to-webp.rs"
 
 [[bin]]
 # Legacy compatibility alias retained from the bash + ImageMagick
-# origin (ADR-0001 § Decision § 5; ADR-0003 § Decision § 4).
-# Forwards arguments and exit status to the canonical binary.
-# The forwarder source is `src/bin/gallery-compress.rs`.
+# origin. Forwards arguments and exit status to the canonical
+# binary and emits a one-line deprecation hint on stderr before
+# invoking it. The forwarder source is `src/bin/gallery-compress.rs`.
 name = "gallery-compress"
 path = "src/bin/gallery-compress.rs"
 
@@ -42,15 +41,13 @@ path = "src/bin/gallery-compress.rs"
 opt-level = 3
 lto = "thin"
 codegen-units = 1
-# AR-008 AC-1: explicit symbol stripping + abort-on-panic.
-# `strip = "symbols"` removes the symbol table from the release
-# binary (matches the v0 `fast-image-converter` README claim of
-# ~1.6 MB stripped; AR-010 keeps the documented size claim in
-# sync with the canonical name). `panic = "abort"` eliminates
+# Explicit symbol stripping + abort-on-panic. `strip = "symbols"`
+# removes the symbol table from the release binary (matches the
+# documented ~1.6 MB stripped size). `panic = "abort"` eliminates
 # unwinding tables and the `.eh_frame` section, slightly reducing
 # binary size at the cost of a process abort (not a clean error
-# path) on a panic. The release workflow (AR-008) measures the
-# resulting size and the trade-off is documented in RUNBOOK § 8.
+# path) on a panic. The release workflow measures the resulting
+# size and the trade-off is documented in RUNBOOK § 8.
 strip = "symbols"
 panic = "abort"
 
@@ -67,12 +64,12 @@ webp = "0.3"
 # verify that the operator-supplied fd is open for writing; it is
 # already a transitive dep of the `webp` crate (via `webp-sys`) but
 # listed explicitly here because the binary uses the symbol
-# directly. DE-005 AC-7.
+# directly.
 libc = "0.2"
 
 [dev-dependencies]
-# `serde_json` powers `tests/json_output.rs` (DE-005 commit 8) —
-# the integration tests parse the binary's NDJSON output to verify
-# the documented `report-shape.md` schema. Dev-only; the release
-# binary is unaffected.
+# `serde_json` powers `tests/json_output.rs` — the integration
+# tests parse the binary's NDJSON output to verify the documented
+# `report-shape.md` schema. Dev-only; the release binary is
+# unaffected.
 serde_json = "1.0"

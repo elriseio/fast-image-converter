@@ -1,4 +1,4 @@
-//! Build-time metadata for the JSON report (DE-005).
+//! Build-time metadata for the JSON report.
 //!
 //! Two values are baked into the binary at compile time:
 //!
@@ -12,7 +12,11 @@
 //!
 //! Both values flow into the JSON report's `host.build_commit_sha`
 //! and `host.libwebp_version` fields via the `env!` / `option_env!`
-//! macros in `src/main.rs::host_meta`.
+//! macros in `src/main.rs::host_meta`. The env-var names retain
+//! the historical `CONVERT_TO_WEBP_*` prefix; renaming them would
+//! require a coordinated migration because they are part of the
+//! runtime contract that downstream consumers can read via the
+//! JSON report's `host` block.
 
 use std::process::Command;
 
