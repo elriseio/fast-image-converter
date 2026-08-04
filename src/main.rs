@@ -273,6 +273,7 @@ fn has_accepted_extension(p: &Path, accepted: &'static [&'static str]) -> bool {
 fn print_usage() {
     eprintln!(
         "Usage: convert-to-webp <dir> [--input-format <fmt>] [--output-format <fmt>]\n\
+         \x20                      [--quality <1..100>] [--resize <policy>] [--keep-source]\n\
          \n\
          Arguments:\n\
          \x20 <dir>                  directory containing the input images\n\
@@ -280,6 +281,9 @@ fn print_usage() {
          Flags:\n\
          \x20 --input-format <fmt>   one of: jpg, png, webp (default: jpg)\n\
          \x20 --output-format <fmt>  one of: jpg, png, webp (default: webp)\n\
+         \x20 --quality <n>          encode quality in 1..100 (default: 85; honoured by WebP and JPEG outputs)\n\
+         \x20 --resize <policy>      'none' | 'cap=<W>' | 'auto:portrait=<W>,landscape=<H>' (default: auto:portrait=800,landscape=1000)\n\
+         \x20 --keep-source          leave the source file in place after a successful conversion\n\
          \x20 -h, --help             show this help\n\
          \n\
          Examples:\n\
@@ -287,6 +291,7 @@ fn print_usage() {
          \x20 convert-to-webp /tmp/my-images --input-format png --output-format webp\n\
          \x20 convert-to-webp /tmp/my-images --input-format webp --output-format png\n\
          \x20 convert-to-webp /tmp/my-images --input-format webp --output-format jpg\n\
+         \x20 convert-to-webp /tmp/my-images --quality 75 --resize cap=1024 --keep-source\n\
          \n\
          Env:\n\
          \x20 GALLERY_BASE  default: {DEFAULT_GALLERY_BASE}"
