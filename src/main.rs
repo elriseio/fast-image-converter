@@ -341,9 +341,19 @@ fn run_single_file(cli: &Cli) -> ExitCode {
         (Format::Jpg, Format::Jpg)
         | (Format::Png, Format::Png)
         | (Format::Webp, Format::Webp) => {
-            emit_single_file_metadata(
-                "err", 0, 0, 0,
-                Some("same input/output format is a no-op"),
+            let params = crate::params::Params::default();
+            emit_single_file_failure_report(
+                cli,
+                input_format,
+                output_format,
+                &params,
+                0,
+                None,
+                0,
+                None,
+                crate::report::ErrorKind::Io,
+                "same input/output format is a no-op",
+                0,
             );
             return ExitCode::from(2);
         }
@@ -362,9 +372,18 @@ fn run_single_file(cli: &Cli) -> ExitCode {
     let started = Instant::now();
     let mut in_bytes_buf = Vec::new();
     if let Err(e) = std::io::stdin().read_to_end(&mut in_bytes_buf) {
-        emit_single_file_metadata(
-            "err", 0, 0, started.elapsed().as_millis() as u64,
-            Some(&format!("cannot read stdin: {e}")),
+        emit_single_file_failure_report(
+            cli,
+            input_format,
+            output_format,
+            &params,
+            0,
+            None,
+            0,
+            None,
+            crate::report::ErrorKind::Io,
+            &format!("cannot read stdin: {e}"),
+            started.elapsed().as_millis() as u64,
         );
         return ExitCode::from(1);
     }
@@ -372,12 +391,19 @@ fn run_single_file(cli: &Cli) -> ExitCode {
     let img = match codec.decode_bytes(&in_bytes_buf) {
         Ok(img) => img,
         Err(e) => {
-            emit_single_file_metadata(
-                "err",
+            let raw = codec_error_inner_message(&e);
+            emit_single_file_failure_report(
+                cli,
+                input_format,
+                output_format,
+                &params,
                 in_bytes_buf.len() as u64,
+                None,
                 0,
+                None,
+                crate::report::ErrorKind::Decode,
+                raw,
                 started.elapsed().as_millis() as u64,
-                Some(&format!("decode error: {e}")),
             );
             return ExitCode::from(1);
         }
@@ -388,12 +414,19 @@ fn run_single_file(cli: &Cli) -> ExitCode {
     let encoded = match codec.encode_to_vec(&resized, params.quality) {
         Ok(b) => b,
         Err(e) => {
-            emit_single_file_metadata(
-                "err",
+            let raw = codec_error_inner_message(&e);
+            emit_single_file_failure_report(
+                cli,
+                input_format,
+                output_format,
+                &params,
                 in_bytes_buf.len() as u64,
+                Some((img.width(), img.height())),
                 0,
+                None,
+                crate::report::ErrorKind::Encode,
+                raw,
                 started.elapsed().as_millis() as u64,
-                Some(&format!("encode error: {e}")),
             );
             return ExitCode::from(1);
         }
@@ -402,22 +435,34 @@ fn run_single_file(cli: &Cli) -> ExitCode {
     let stdout = std::io::stdout();
     let mut out = stdout.lock();
     if let Err(e) = out.write_all(&encoded) {
-        emit_single_file_metadata(
-            "err",
+        emit_single_file_failure_report(
+            cli,
+            input_format,
+            output_format,
+            &params,
             in_bytes_buf.len() as u64,
+            Some((img.width(), img.height())),
             0,
+            None,
+            crate::report::ErrorKind::Io,
+            &format!("cannot write stdout: {e}"),
             started.elapsed().as_millis() as u64,
-            Some(&format!("cannot write stdout: {e}")),
         );
         return ExitCode::from(1);
     }
     if let Err(e) = out.flush() {
-        emit_single_file_metadata(
-            "err",
+        emit_single_file_failure_report(
+            cli,
+            input_format,
+            output_format,
+            &params,
             in_bytes_buf.len() as u64,
+            Some((img.width(), img.height())),
             encoded.len() as u64,
+            Some((resized.width(), resized.height())),
+            crate::report::ErrorKind::Io,
+            &format!("cannot flush stdout: {e}"),
             started.elapsed().as_millis() as u64,
-            Some(&format!("cannot flush stdout: {e}")),
         );
         return ExitCode::from(1);
     }
@@ -492,7 +537,7 @@ fn emit_single_file_success_report(
         return;
     }
     use crate::report::{
-        CodecMeta, HostMeta, ImageFormat, ImageInfo, Mode, Report, Status,
+        CodecMeta, ImageFormat, ImageInfo, Mode, Report, Status,
     };
     let report = Report {
         mode: Mode::SingleFile,
@@ -520,6 +565,89 @@ fn emit_single_file_success_report(
     eprintln!("{}", report.to_json());
 }
 
+/// Emit a failure-path single-file report on stderr. When `--json`
+/// is set, emits a structured NDJSON record per DE-005 § 2 with
+/// `status: "err"` and the documented `error` block. Otherwise
+/// falls back to the v0 key=value shape with the kind prefix
+/// (`decode error:`, `encode error:`, or `io error:`).
+///
+/// `input_dims` / `output_dims` are `None` when the corresponding
+/// data is not known (decode failure → no output dims; encode
+/// failure → output dims are zero; pre-decode failure → both
+/// `None`). `in_bytes` / `out_bytes` of 0 produce `null` blocks
+/// in the JSON record (per AC-4: "output fields are present but
+/// zeroed where not meaningful").
+fn emit_single_file_failure_report(
+    cli: &Cli,
+    input_format: Format,
+    output_format: Format,
+    params: &crate::params::Params,
+    in_bytes: u64,
+    input_dims: Option<(u32, u32)>,
+    out_bytes: u64,
+    output_dims: Option<(u32, u32)>,
+    error_kind: crate::report::ErrorKind,
+    error_msg: &str,
+    duration_ms: u64,
+) {
+    if !cli.json {
+        let kind_str = match error_kind {
+            crate::report::ErrorKind::Decode => "decode error",
+            crate::report::ErrorKind::Encode => "encode error",
+            crate::report::ErrorKind::Io => "io error",
+        };
+        let full_msg = format!("{kind_str}: {error_msg}");
+        emit_single_file_metadata(
+            "err",
+            in_bytes,
+            out_bytes,
+            duration_ms,
+            Some(&full_msg),
+        );
+        return;
+    }
+    use crate::report::{
+        CodecMeta, ImageFormat, ImageInfo, Mode, Report, ReportError, Status,
+    };
+    let input = if in_bytes > 0 {
+        Some(ImageInfo {
+            format: ImageFormat::from(input_format),
+            bytes: in_bytes,
+            width: input_dims.map(|d| d.0),
+            height: input_dims.map(|d| d.1),
+        })
+    } else {
+        None
+    };
+    let output = if out_bytes > 0 {
+        Some(ImageInfo {
+            format: ImageFormat::from(output_format),
+            bytes: out_bytes,
+            width: output_dims.map(|d| d.0),
+            height: output_dims.map(|d| d.1),
+        })
+    } else {
+        None
+    };
+    let report = Report {
+        mode: Mode::SingleFile,
+        status: Status::Err,
+        input,
+        output,
+        codec: CodecMeta {
+            quality: params.quality,
+            resize_policy: resize_policy_to_string(params.resize),
+        },
+        host: host_meta(),
+        duration_ms,
+        error: Some(ReportError {
+            kind: error_kind,
+            message: error_msg.to_string(),
+        }),
+    };
+    eprintln!("{}", report.to_json());
+}
+
 /// Format a `ResizePolicy` back to its CLI string form so the
 /// JSON report is round-trippable against `parse_resize`. Used by
 /// the `--json` mode; the v0 key=value shape does not embed the
@@ -543,6 +671,18 @@ fn host_meta() -> crate::report::HostMeta {
     crate::report::HostMeta {
         libwebp_version: "1.6.0",
         build_commit_sha: None,
+    }
+}
+
+/// Return the inner message of a `CodecError` without the
+/// `"decode error: "` / `"encode error: "` / `"io error: "`
+/// prefix that `Display` adds. The JSON report's `error.message`
+/// field carries the raw codec message; the v0 key=value path
+/// adds the kind-prefix back via `emit_single_file_failure_report`.
+fn codec_error_inner_message(e: &crate::format::CodecError) -> &str {
+    use crate::format::CodecError;
+    match e {
+        CodecError::Decode(m) | CodecError::Encode(m) | CodecError::Io(m) => m,
     }
 }
 
