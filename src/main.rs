@@ -11,6 +11,7 @@ use format::{
     CodecImpl, Format, JpegToPng, JpegToWebp, PngToJpeg, PngToWebp, WebpToJpeg,
     WebpToPng,
 };
+use params::parse_resize;
 
 const BINARY_NAME: &str = "convert-to-webp";
 const DEFAULT_GALLERY_BASE: &str =
@@ -22,6 +23,7 @@ enum CliError {
     BadInputFormat(String),
     BadOutputFormat(String),
     BadQuality(String),
+    BadResize(String),
 }
 
 #[derive(Debug)]
@@ -31,6 +33,8 @@ struct Cli {
     output_format: Option<Format>,
     #[allow(dead_code)] // wired into codec invocation in DE-003 commit 4
     quality: Option<u8>,
+    #[allow(dead_code)] // wired into codec invocation in DE-003 commit 4
+    resize: Option<crate::format::ResizePolicy>,
 }
 
 fn parse_quality(s: &str) -> Result<u8, String> {
@@ -48,6 +52,7 @@ fn parse_cli(args: &[String]) -> Result<Cli, CliError> {
     let mut input_format: Option<Format> = None;
     let mut output_format: Option<Format> = None;
     let mut quality: Option<u8> = None;
+    let mut resize: Option<crate::format::ResizePolicy> = None;
 
     let mut i = 1;
     while i < args.len() {
@@ -70,6 +75,11 @@ fn parse_cli(args: &[String]) -> Result<Cli, CliError> {
             "--quality" => {
                 let v = args.get(i + 1).ok_or(CliError::Usage)?;
                 quality = Some(parse_quality(v).map_err(CliError::BadQuality)?);
+                i += 2;
+            }
+            "--resize" => {
+                let v = args.get(i + 1).ok_or(CliError::Usage)?;
+                resize = Some(parse_resize(v).map_err(CliError::BadResize)?);
                 i += 2;
             }
             "-h" | "--help" => return Err(CliError::Usage),
@@ -96,6 +106,7 @@ fn parse_cli(args: &[String]) -> Result<Cli, CliError> {
         input_format,
         output_format,
         quality,
+        resize,
     })
 }
 
@@ -113,6 +124,10 @@ fn main() -> ExitCode {
                 ),
                 CliError::BadQuality(v) => eprintln!(
                     "{BINARY_NAME}: invalid --quality: {v} (expected integer in 1..100)"
+                ),
+                CliError::BadResize(v) => eprintln!(
+                    "{BINARY_NAME}: invalid --resize: {v} \
+                     (expected 'none', 'cap=<W>', or 'auto:portrait=<W>,landscape=<H>')"
                 ),
                 CliError::Usage => {}
             }
