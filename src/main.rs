@@ -314,6 +314,7 @@ fn has_accepted_extension(p: &Path, accepted: &'static [&'static str]) -> bool {
 /// contract.
 fn run_single_file(cli: &Cli) -> ExitCode {
     use std::io::{Read, Write};
+    use std::time::Instant;
 
     // Default = v0 behaviour: jpg -> webp. Both flags are explicit
     // overrides; the absent pair remains the v0 default.
@@ -330,9 +331,9 @@ fn run_single_file(cli: &Cli) -> ExitCode {
         (Format::Jpg, Format::Jpg)
         | (Format::Png, Format::Png)
         | (Format::Webp, Format::Webp) => {
-            eprintln!(
-                "{BINARY_NAME}: same input/output format ({input_format:?}) \
-                 is a no-op; refusing to overwrite the source."
+            emit_single_file_metadata(
+                "err", 0, 0, 0,
+                Some("same input/output format is a no-op"),
             );
             return ExitCode::from(2);
         }
@@ -348,16 +349,26 @@ fn run_single_file(cli: &Cli) -> ExitCode {
     // keep_source is silently ignored in single-file mode (no source
     // filesystem path to preserve; DE-004 §2 Scope).
 
+    let started = Instant::now();
     let mut in_bytes_buf = Vec::new();
     if let Err(e) = std::io::stdin().read_to_end(&mut in_bytes_buf) {
-        eprintln!("{BINARY_NAME}: cannot read stdin: {e}");
+        emit_single_file_metadata(
+            "err", 0, 0, started.elapsed().as_millis() as u64,
+            Some(&format!("cannot read stdin: {e}")),
+        );
         return ExitCode::from(1);
     }
 
     let img = match codec.decode_bytes(&in_bytes_buf) {
         Ok(img) => img,
         Err(e) => {
-            eprintln!("{BINARY_NAME}: decode error: {e}");
+            emit_single_file_metadata(
+                "err",
+                in_bytes_buf.len() as u64,
+                0,
+                started.elapsed().as_millis() as u64,
+                Some(&format!("decode error: {e}")),
+            );
             return ExitCode::from(1);
         }
     };
@@ -367,7 +378,13 @@ fn run_single_file(cli: &Cli) -> ExitCode {
     let encoded = match codec.encode_to_vec(&resized, params.quality) {
         Ok(b) => b,
         Err(e) => {
-            eprintln!("{BINARY_NAME}: encode error: {e}");
+            emit_single_file_metadata(
+                "err",
+                in_bytes_buf.len() as u64,
+                0,
+                started.elapsed().as_millis() as u64,
+                Some(&format!("encode error: {e}")),
+            );
             return ExitCode::from(1);
         }
     };
@@ -375,14 +392,60 @@ fn run_single_file(cli: &Cli) -> ExitCode {
     let stdout = std::io::stdout();
     let mut out = stdout.lock();
     if let Err(e) = out.write_all(&encoded) {
-        eprintln!("{BINARY_NAME}: cannot write stdout: {e}");
+        emit_single_file_metadata(
+            "err",
+            in_bytes_buf.len() as u64,
+            0,
+            started.elapsed().as_millis() as u64,
+            Some(&format!("cannot write stdout: {e}")),
+        );
         return ExitCode::from(1);
     }
     if let Err(e) = out.flush() {
-        eprintln!("{BINARY_NAME}: cannot flush stdout: {e}");
+        emit_single_file_metadata(
+            "err",
+            in_bytes_buf.len() as u64,
+            encoded.len() as u64,
+            started.elapsed().as_millis() as u64,
+            Some(&format!("cannot flush stdout: {e}")),
+        );
         return ExitCode::from(1);
     }
+
+    emit_single_file_metadata(
+        "ok",
+        in_bytes_buf.len() as u64,
+        encoded.len() as u64,
+        started.elapsed().as_millis() as u64,
+        None,
+    );
     ExitCode::from(0)
+}
+
+/// Emit the single-line metadata record on stderr in single-file
+/// mode. Shape per DE-004 § 5:
+///
+///   status=<ok|err> in_bytes=<N> out_bytes=<N> duration_ms=<N> error=<message>
+///
+/// `error=` is omitted on success and present (with the codec-
+/// reported message) on failure.
+fn emit_single_file_metadata(
+    status: &str,
+    in_bytes: u64,
+    out_bytes: u64,
+    duration_ms: u64,
+    error: Option<&str>,
+) {
+    match error {
+        Some(msg) => eprintln!(
+            "status={status} in_bytes={in_bytes} out_bytes={out_bytes} \
+             duration_ms={duration_ms} error={msg}"
+        ),
+        None => eprintln!(
+            "status={status} in_bytes={in_bytes} out_bytes={out_bytes} \
+             duration_ms={duration_ms}"
+        ),
+    }
 }
 
 fn print_usage() {
