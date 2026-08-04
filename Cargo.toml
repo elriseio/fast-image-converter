@@ -19,6 +19,16 @@ path = "src/bin/gallery-compress.rs"
 opt-level = 3
 lto = "thin"
 codegen-units = 1
+# AR-008 AC-1: explicit symbol stripping + abort-on-panic.
+# `strip = "symbols"` removes the symbol table from the release
+# binary (matches the v0 `convert-to-webp` README claim of ~1.6 MB
+# stripped). `panic = "abort"` eliminates unwinding tables and the
+# `.eh_frame` section, slightly reducing binary size at the cost
+# of a process abort (not a clean error path) on a panic. The
+# release workflow (AR-008) measures the resulting size and the
+# trade-off is documented in RUNBOOK § 8.
+strip = "symbols"
+panic = "abort"
 
 [dependencies]
 # The `image` crate's `webp` feature enables the WebP DECODER (read
