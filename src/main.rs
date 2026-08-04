@@ -2,6 +2,8 @@ use std::env;
 use std::fs;
 use std::path::{Path, PathBuf};
 use std::process::ExitCode;
+use std::sync::atomic::{AtomicU64, Ordering};
+use std::time::Instant;
 
 use rayon::prelude::*;
 
@@ -261,48 +263,110 @@ fn main() -> ExitCode {
     }
 
     let n = candidates.len();
-    let results: Vec<Result<(u64, u64), String>> = candidates
-        .par_iter()
-        .map(|src| {
-            let dst = src.with_extension(codec.output_extension());
-            let report = codec
-                .convert_one_with(src, &dst, &params)
-                .map_err(|e| format!("{}: {}", src.display(), e))?;
-            if !params.keep_source {
-                fs::remove_file(src).map_err(|e| e.to_string())?;
-            }
-            Ok((report.in_bytes, report.out_bytes))
-        })
-        .collect();
+    let count = AtomicU64::new(0);
+    let total_in = AtomicU64::new(0);
+    let total_out = AtomicU64::new(0);
+    let failed = AtomicU64::new(0);
 
-    let mut count: u64 = 0;
-    let mut total_in: u64 = 0;
-    let mut total_out: u64 = 0;
-    let mut failed: u64 = 0;
-    for r in results {
-        match r {
-            Ok((i, o)) => {
-                count += 1;
-                total_in += i;
-                total_out += o;
+    candidates.par_iter().for_each(|src| {
+        let started = Instant::now();
+        let dst = src.with_extension(codec.output_extension());
+        let conv = codec.convert_one_with(src, &dst, &params);
+        let duration_ms = started.elapsed().as_millis() as u64;
+        let (bytes_in, bytes_out) = match &conv {
+            Ok(r) => (r.in_bytes, r.out_bytes),
+            Err(_) => (0, 0),
+        };
+        // Per DE-005 § 2 the JSON mode emits one NDJSON record per
+        // candidate in completion order (independent lines, no
+        // enclosing array). Emitted from inside the parallel
+        // iterator so each candidate's line lands as soon as it
+        // finishes; eprintln! acquires the stderr lock per call so
+        // the JSON lines do not interleave even though rayon runs
+        // the closure concurrently.
+        match conv {
+            Ok(report) => {
+                if !params.keep_source {
+                    if let Err(e) = fs::remove_file(src) {
+                        // Decode / encode / write succeeded but
+                        // the post-conversion source-delete failed
+                        // (codec-bounds.md INV-CB-3 / § 3 Outputs:
+                        // 'source-delete' is part of success).
+                        // Record this candidate as a failure.
+                        failed.fetch_add(1, Ordering::Relaxed);
+                        if cli.json {
+                            emit_batch_record_io_failure(
+                                &cli,
+                                input_format,
+                                output_format,
+                                &params,
+                                src,
+                                &report,
+                                &format!("cannot delete source: {e}"),
+                                duration_ms,
+                            );
+                        } else {
+                            eprintln!(
+                                "{BINARY_NAME}: cannot delete {}: {e}",
+                                src.display()
+                            );
+                        }
+                        return;
+                    }
+                }
+                count.fetch_add(1, Ordering::Relaxed);
+                total_in.fetch_add(bytes_in, Ordering::Relaxed);
+                total_out.fetch_add(bytes_out, Ordering::Relaxed);
+                if cli.json {
+                    emit_batch_record_success(
+                        &cli,
+                        input_format,
+                        output_format,
+                        &params,
+                        src,
+                        &report,
+                        duration_ms,
+                    );
+                }
             }
-            Err(msg) => {
-                eprintln!("{BINARY_NAME}: {}", msg);
-                failed += 1;
+            Err(e) => {
+                failed.fetch_add(1, Ordering::Relaxed);
+                let kind = codec_error_kind(&e);
+                let raw = codec_error_inner_message(&e);
+                if cli.json {
+                    emit_batch_record_failure(
+                        &cli,
+                        input_format,
+                        output_format,
+                        &params,
+                        src,
+                        bytes_in,
+                        kind,
+                        raw,
+                        duration_ms,
+                    );
+                } else {
+                    eprintln!("{BINARY_NAME}: {}: {}", src.display(), e);
+                }
             }
         }
-    }
+    });
+
+    let count_val = count.load(Ordering::Relaxed);
+    let total_in_val = total_in.load(Ordering::Relaxed);
+    let total_out_val = total_out.load(Ordering::Relaxed);
+    let failed_val = failed.load(Ordering::Relaxed);
 
     println!(
         "{BINARY_NAME}: {} files in {}: {} -> {}",
-        count,
+        count_val,
         dir.display(),
-        human_bytes(total_in),
-        human_bytes(total_out)
+        human_bytes(total_in_val),
+        human_bytes(total_out_val)
     );
-    eprintln!("(processed {} candidates, {} failed)", n, failed);
+    eprintln!("(processed {} candidates, {} failed)", n, failed_val);
 
-    if failed > 0 {
+    if failed_val > 0 {
         ExitCode::from(1)
     } else {
         ExitCode::from(0)
@@ -684,6 +748,158 @@ fn codec_error_inner_message(e: &crate::format::CodecError) -> &str {
     match e {
         CodecError::Decode(m) | CodecError::Encode(m) | CodecError::Io(m) => m,
     }
+}
+
+/// Map a `CodecError` to the JSON `error.kind` enum. Used by the
+/// batch-mode JSON emitter and by `emit_batch_record_failure`.
+fn codec_error_kind(e: &crate::format::CodecError) -> crate::report::ErrorKind {
+    use crate::format::CodecError;
+    match e {
+        CodecError::Decode(_) => crate::report::ErrorKind::Decode,
+        CodecError::Encode(_) => crate::report::ErrorKind::Encode,
+        CodecError::Io(_) => crate::report::ErrorKind::Io,
+    }
+}
+
+/// Emit one NDJSON line for a successful batch-mode conversion.
+/// Called from inside the rayon parallel iterator; per DE-005 § 2
+/// the line is emitted as soon as the candidate finishes, in
+/// completion order (no enclosing array).
+fn emit_batch_record_success(
+    _cli: &Cli,
+    input_format: Format,
+    output_format: Format,
+    params: &crate::params::Params,
+    src: &Path,
+    report: &crate::format::ConversionReport,
+    duration_ms: u64,
+) {
+    use crate::report::{
+        CodecMeta, ImageFormat, ImageInfo, Mode, Report, Status,
+    };
+    let r = Report {
+        mode: Mode::Batch,
+        status: Status::Ok,
+        input: Some(ImageInfo {
+            format: ImageFormat::from(input_format),
+            bytes: report.in_bytes,
+            width: Some(report.input_width),
+            height: Some(report.input_height),
+        }),
+        output: Some(ImageInfo {
+            format: ImageFormat::from(output_format),
+            bytes: report.out_bytes,
+            width: Some(report.output_width),
+            height: Some(report.output_height),
+        }),
+        codec: CodecMeta {
+            quality: params.quality,
+            resize_policy: resize_policy_to_string(params.resize),
+        },
+        host: host_meta(),
+        duration_ms,
+        error: None,
+    };
+    // `src` is intentionally not embedded in the per-file record;
+    // the caller's NDJSON line index identifies the file in
+    // completion order (per DE-005 § 2).
+    let _ = src;
+    eprintln!("{}", r.to_json());
+}
+
+/// Emit one NDJSON line for a batch-mode codec failure (decode /
+/// encode / write). `in_bytes` is the source byte count when
+/// known (0 when decode never ran); output dims are absent.
+fn emit_batch_record_failure(
+    _cli: &Cli,
+    input_format: Format,
+    _output_format: Format,
+    params: &crate::params::Params,
+    src: &Path,
+    in_bytes: u64,
+    error_kind: crate::report::ErrorKind,
+    error_msg: &str,
+    duration_ms: u64,
+) {
+    use crate::report::{
+        CodecMeta, ImageFormat, ImageInfo, Mode, Report, ReportError, Status,
+    };
+    let input = if in_bytes > 0 {
+        Some(ImageInfo {
+            format: ImageFormat::from(input_format),
+            bytes: in_bytes,
+            width: None,
+            height: None,
+        })
+    } else {
+        None
+    };
+    let r = Report {
+        mode: Mode::Batch,
+        status: Status::Err,
+        input,
+        output: None,
+        codec: CodecMeta {
+            quality: params.quality,
+            resize_policy: resize_policy_to_string(params.resize),
+        },
+        host: host_meta(),
+        duration_ms,
+        error: Some(ReportError {
+            kind: error_kind,
+            message: error_msg.to_string(),
+        }),
+    };
+    let _ = src;
+    eprintln!("{}", r.to_json());
+}
+
+/// Emit one NDJSON line for a post-conversion source-delete
+/// failure (decode / encode / write succeeded but `fs::remove_file`
+/// failed). The struct already carries input / output bytes and
+/// dimensions because the codec returned Ok; the error.kind is
+/// Io and the message names the delete step.
+fn emit_batch_record_io_failure(
+    _cli: &Cli,
+    input_format: Format,
+    output_format: Format,
+    params: &crate::params::Params,
+    src: &Path,
+    conv: &crate::format::ConversionReport,
+    error_msg: &str,
+    duration_ms: u64,
+) {
+    use crate::report::{
+        CodecMeta, ImageFormat, ImageInfo, Mode, Report, ReportError, Status,
+    };
+    let r = Report {
+        mode: Mode::Batch,
+        status: Status::Err,
+        input: Some(ImageInfo {
+            format: ImageFormat::from(input_format),
+            bytes: conv.in_bytes,
+            width: Some(conv.input_width),
+            height: Some(conv.input_height),
+        }),
+        output: Some(ImageInfo {
+            format: ImageFormat::from(output_format),
+            bytes: conv.out_bytes,
+            width: Some(conv.output_width),
+            height: Some(conv.output_height),
+        }),
+        codec: CodecMeta {
+            quality: params.quality,
+            resize_policy: resize_policy_to_string(params.resize),
+        },
+        host: host_meta(),
+        duration_ms,
+        error: Some(ReportError {
+            kind: crate::report::ErrorKind::Io,
+            message: error_msg.to_string(),
+        }),
+    };
+    let _ = src;
+    eprintln!("{}", r.to_json());
 }
 
 fn print_usage() {

@@ -147,6 +147,10 @@ pub trait Codec {
                 .map_err(|e| CodecError::Io(e.to_string()))?
                 .len(),
             out_bytes,
+            input_width: img.width(),
+            input_height: img.height(),
+            output_width: resized.width(),
+            output_height: resized.height(),
         })
     }
 
@@ -162,11 +166,20 @@ pub trait Codec {
     }
 }
 
-/// Conversion result: source byte count + destination byte count.
+/// Conversion result: source byte count, destination byte count,
+/// and the pre- / post-resize pixel dimensions. The dimensions
+/// are populated on success (the `convert_one_with` default impl
+/// populates them from the decoded and resized images). Callers
+/// that need them in JSON output should consume the full struct;
+/// see `docs/contracts/report-shape.md` for the wire shape.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct ConversionReport {
     pub in_bytes: u64,
     pub out_bytes: u64,
+    pub input_width: u32,
+    pub input_height: u32,
+    pub output_width: u32,
+    pub output_height: u32,
 }
 
 /// Apply the resize policy to a decoded image. Returns the original
