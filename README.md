@@ -64,6 +64,11 @@ compatible alias; see "Binary rename" below.
 ./target/release/convert-to-webp /tmp/my-images --input-format webp --output-format png
 ./target/release/convert-to-webp /tmp/my-images --input-format webp --output-format jpg
 
+# tune quality / resize / keep-source
+./target/release/convert-to-webp /tmp/my-images --quality 75 --resize cap=1024
+./target/release/convert-to-webp /tmp/my-images --resize auto:portrait=800,landscape=1000
+./target/release/convert-to-webp /tmp/my-images --keep-source
+
 # help
 ./target/release/convert-to-webp --help
 ```
@@ -74,6 +79,9 @@ compatible alias; see "Binary rename" below.
 |---|---|---|---|
 | `--input-format <fmt>` | `jpg`, `png`, `webp` (case-insensitive) | `jpg` | input format (files with this extension are processed) |
 | `--output-format <fmt>` | `jpg`, `png`, `webp` (case-insensitive) | `webp` | output format |
+| `--quality <n>` | integer in `1..100` | `85` | encode quality (honoured by WebP and JPEG outputs; PNG output is lossless and ignores it) |
+| `--resize <policy>` | `none` \| `cap=<W>` \| `auto:portrait=<W>,landscape=<H>` | `auto:portrait=800,landscape=1000` | resize policy applied before encoding |
+| `--keep-source` | boolean flag | `false` | leave the source file in place after a successful conversion (v0 baseline removes it) |
 | `-h`, `--help` | — | — | print usage to stderr and exit 2 |
 
 The default pair `--input-format jpg --output-format webp` is the v0
