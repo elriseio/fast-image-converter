@@ -21,7 +21,13 @@ use std::process::{Command, Stdio};
 use serde_json::Value;
 
 fn binary() -> &'static str {
-    env!("CARGO_BIN_EXE_convert-to-webp")
+    // AR-009 AC-5: integration tests target the canonical
+    // `fast-image-converter` binary; the legacy names survive as
+    // forwarders and are covered by `tests/alias_forwarding.rs`.
+    // Cargo emits `CARGO_BIN_EXE_<bin>` with the literal hyphenated
+    // bin name (it does not normalise hyphens to underscores for
+    // these environment variables).
+    env!("CARGO_BIN_EXE_fast-image-converter")
 }
 
 fn fixtures() -> PathBuf {
@@ -339,7 +345,9 @@ fn make_batch_run_dir(label: &str) -> PathBuf {
         .duration_since(std::time::UNIX_EPOCH)
         .unwrap()
         .as_nanos();
-    p.push(format!("convert-to-webp-json-batch-{label}-{pid}-{nonce}"));
+    p.push(format!(
+        "fast-image-converter-json-batch-{label}-{pid}-{nonce}"
+    ));
     fs::create_dir_all(&p).expect("create batch run dir");
     p
 }
@@ -406,7 +414,7 @@ fn batch_json_without_input_dir_exits_nonzero_with_error_block() {
     // walking candidates). The error appears on stderr outside
     // the NDJSON stream.
     let bogus = std::env::temp_dir().join(format!(
-        "convert-to-webp-no-such-dir-{}",
+        "fast-image-converter-no-such-dir-{}",
         std::process::id()
     ));
     let (status, _stdout, stderr) = spawn(&[bogus.to_str().unwrap(), "--json"], None);

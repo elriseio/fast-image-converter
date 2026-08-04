@@ -111,25 +111,37 @@ jobs:
       - name: Build release binaries
         run: cargo build --release --bins
 
-      - name: Measure binary sizes (AR-008 AC-1)
+      - name: Measure binary sizes (AR-008 AC-1, AR-010 AC-2)
         id: sizes
         run: |
           set -euo pipefail
-          main_size=$(stat -c '%s' target/release/convert-to-webp)
+          # AR-010 AC-2: the canonical `fast-image-converter` is the
+          # primary release artefact. The two compatibility aliases
+          # (`convert-to-webp`, `gallery-compress`) ship alongside
+          # it as documented compatibility assets.
+          canonical_size=$(stat -c '%s' target/release/fast-image-converter)
+          deprecated_size=$(stat -c '%s' target/release/convert-to-webp)
           legacy_size=$(stat -c '%s' target/release/gallery-compress)
-          echo "convert-to-webp=${main_size}"
+          echo "fast-image-converter=${canonical_size}"
+          echo "convert-to-webp=${deprecated_size}"
           echo "gallery-compress=${legacy_size}"
-          echo "main_size=${main_size}" >> "$GITHUB_OUTPUT"
+          echo "canonical_size=${canonical_size}" >> "$GITHUB_OUTPUT"
+          echo "deprecated_size=${deprecated_size}" >> "$GITHUB_OUTPUT"
           echo "legacy_size=${legacy_size}" >> "$GITHUB_OUTPUT"
 
-      - name: Generate SHA-256 checksums (AR-008 AC-3)
+      - name: Generate SHA-256 checksums (AR-008 AC-3, AR-010 AC-3)
         run: |
           set -euo pipefail
+          # AR-010 AC-3: the checksum file uses the actual
+          # published filenames. The canonical binary is listed
+          # first; the compatibility aliases follow in alphabetical
+          # order so the manifest + checksums read top-to-bottom
+          # in the same order.
           cd target/release
-          sha256sum convert-to-webp gallery-compress > SHA256SUMS
+          sha256sum fast-image-converter convert-to-webp gallery-compress > SHA256SUMS
           cat SHA256SUMS
 
-      - name: Build manifest (AR-008 AC-3)
+      - name: Build manifest (AR-008 AC-3, AR-010 AC-2)
         run: |
           set -euo pipefail
           version=$(awk -F\" '/^version/ {print $2; exit}' Cargo.toml)
@@ -138,41 +150,62 @@ jobs:
           rust_version=$(rustc --version | awk '{print $2}')
           libwebp_version=$(pkg-config --modversion libwebp)
           {
-            echo "name=convert-to-webp"
+            echo "name=fast-image-converter"
             echo "version=${version}"
             echo "commit=${commit}"
             echo "target=${target_triple}"
             echo "rust_version=${rust_version}"
             echo "libwebp_version=${libwebp_version}"
-            echo "binaries=convert-to-webp,gallery-compress"
-            echo "main_size_bytes=${{ steps.sizes.outputs.main_size }}"
+            echo "binaries=fast-image-converter,convert-to-webp,gallery-compress"
+            echo "canonical_size_bytes=${{ steps.sizes.outputs.canonical_size }}"
+            echo "deprecated_size_bytes=${{ steps.sizes.outputs.deprecated_size }}"
             echo "legacy_size_bytes=${{ steps.sizes.outputs.legacy_size }}"
             echo "license=MIT"
             echo "schema_version=1"
           } > target/release/build-manifest.txt
           cat target/release/build-manifest.txt
 
-      - name: Smoke test (AR-008 AC-5)
+      - name: Smoke test (AR-008 AC-5, AR-010 AC-4)
         run: |
           set -euo pipefail
-          ./target/release/convert-to-webp --help > /tmp/help.txt
+          # AR-010 AC-4: the canonical binary runs the full
+          # batch + single-file round-trip; both compatibility
+          # aliases must forward to it (same exit code, same
+          # outputs) without surfacing as canonical in their
+          # own runtime help.
+          ./target/release/fast-image-converter --help > /tmp/help.txt
+          grep -q '^Usage: fast-image-converter' /tmp/help.txt
           # Build a tiny JPG fixture with ImageMagick and round-trip it.
           tmp=$(mktemp -d)
           convert -size 64x48 xc:red "$tmp/red.jpg"
-          ./target/release/convert-to-webp "$tmp" >/dev/null
+          ./target/release/fast-image-converter "$tmp" >/dev/null
           test -f "$tmp/red.webp"
-          ./target/release/convert-to-webp --single-file < "$tmp/red.jpg" > /tmp/out.webp
-          # exit 0 on success
+          ./target/release/fast-image-converter --single-file < "$tmp/red.jpg" > /tmp/out.webp
           rc=$?
           test "$rc" -eq 0
-          # Legacy forwarder must still wrap the canonical binary.
-          ./target/release/gallery-compress "$tmp" >/dev/null 2>&1 || true
-          rm -rf "$tmp" /tmp/out.webp /tmp/help.txt
+          # Compatibility aliases must forward to the canonical
+          # binary and exit 0; they emit their own one-line
+          # deprecation hint on stderr (AC-3 / AC-4 / AC-7).
+          ./target/release/convert-to-webp "$tmp" >/dev/null 2> /tmp/ctw.err
+          ctw_rc=$?
+          grep -q 'deprecated alias' /tmp/ctw.err
+          test "$ctw_rc" -eq 0
+          ./target/release/gallery-compress "$tmp" >/dev/null 2> /tmp/gc.err
+          gc_rc=$?
+          grep -q 'legacy alias' /tmp/gc.err
+          test "$gc_rc" -eq 0
+          rm -rf "$tmp" /tmp/out.webp /tmp/help.txt /tmp/ctw.err /tmp/gc.err
 
-      - name: Assemble release artefacts
+      - name: Assemble release artefacts (AR-010 AC-1, AC-6)
         run: |
           set -euo pipefail
           mkdir -p target/release-dir
+          # AR-010 AC-1 / AC-6: the canonical binary is published
+          # first; the compatibility aliases follow in alphabetical
+          # order. The artefact dir name preserves the literal
+          # binary names so operators can install any of the three
+          # via the documented install path.
+          cp target/release/fast-image-converter target/release-dir/fast-image-converter
           cp target/release/convert-to-webp target/release-dir/convert-to-webp
           cp target/release/gallery-compress target/release-dir/gallery-compress
           cp target/release/SHA256SUMS target/release-dir/SHA256SUMS
@@ -180,11 +213,12 @@ jobs:
           cp LICENSE target/release-dir/LICENSE
           ls -la target/release-dir/
 
-      - name: Publish GitHub release (AR-008 AC-3, AC-6)
+      - name: Publish GitHub release (AR-008 AC-3, AC-6; AR-010 AC-1, AC-6)
         uses: softprops/action-gh-release@v2
         with:
           generate_release_notes: true
           files: |
+            target/release-dir/fast-image-converter
             target/release-dir/convert-to-webp
             target/release-dir/gallery-compress
             target/release-dir/SHA256SUMS

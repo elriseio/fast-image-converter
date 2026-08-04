@@ -15,7 +15,13 @@ use format::{
 };
 use params::parse_resize;
 
-const BINARY_NAME: &str = "convert-to-webp";
+// AR-009 AC-6: runtime error prefixes and the usage banner use the
+// canonical product name. Compatibility aliases
+// (`convert-to-webp`, `gallery-compress`) live in `src/bin/*.rs`
+// and forward into this binary; the aliases themselves emit their
+// own one-line deprecation hint on stderr per ADR-0003 § Decision
+// § 3 / § 4.
+const BINARY_NAME: &str = "fast-image-converter";
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 enum CliError {
@@ -1213,13 +1219,19 @@ fn emit_batch_record_io_failure(
 }
 
 fn print_usage() {
+    // AR-009 AC-7: the canonical usage banner names
+    // `fast-image-converter`. The legacy names appear only in the
+    // aliases list (so operators discovering the binary via
+    // `convert-to-webp --help` or `gallery-compress --help` still
+    // learn about their deprecation; the aliases invoke the
+    // canonical binary after printing their own deprecation hint).
     eprintln!(
-        "Usage: convert-to-webp <dir> [--input-format <fmt>] [--output-format <fmt>]\n\
-         \x20                      [--quality <1..100>] [--resize <policy>] [--keep-source]\n\
-         \x20                      [--json] [--report-fd <N>]\n\
-         \x20      convert-to-webp --single-file [--input-format <fmt>] [--output-format <fmt>]\n\
-         \x20                      [--quality <1..100>] [--resize <policy>]\n\
-         \x20                      [--json] [--report-fd <N>]\n\
+        "Usage: fast-image-converter <dir> [--input-format <fmt>] [--output-format <fmt>]\n\
+         \x20                                [--quality <1..100>] [--resize <policy>] [--keep-source]\n\
+         \x20                                [--json] [--report-fd <N>]\n\
+         \x20          fast-image-converter --single-file [--input-format <fmt>] [--output-format <fmt>]\n\
+         \x20                                [--quality <1..100>] [--resize <policy>]\n\
+         \x20                                [--json] [--report-fd <N>]\n\
          \n\
          Arguments:\n\
          \x20 <dir>                  directory containing the input images (batch mode)\n\
@@ -1235,14 +1247,18 @@ fn print_usage() {
          \x20 --report-fd <N>        override the report stream fd (default 2; N=1 is forbidden)\n\
          \x20 -h, --help             show this help\n\
          \n\
+         Compatibility aliases (deprecated; forward to this binary):\n\
+         \x20 convert-to-webp         forwards to fast-image-converter; emits a one-line deprecation hint on stderr\n\
+         \x20 gallery-compress        forwards to fast-image-converter; emits a one-line deprecation hint on stderr\n\
+         \n\
          Examples:\n\
-         \x20 convert-to-webp /tmp/my-images\n\
-         \x20 convert-to-webp /tmp/my-images --input-format png --output-format webp\n\
-         \x20 convert-to-webp /tmp/my-images --input-format webp --output-format png\n\
-         \x20 convert-to-webp /tmp/my-images --input-format webp --output-format jpg\n\
-         \x20 convert-to-webp /tmp/my-images --quality 75 --resize cap=1024 --keep-source\n\
-         \x20 cat input.jpg | convert-to-webp --single-file --output-format webp > output.webp\n\
-         \x20 cat input.jpg | convert-to-webp --single-file --output-format webp --json > out.webp 2> report.jsonl\n\
+         \x20 fast-image-converter /tmp/my-images\n\
+         \x20 fast-image-converter /tmp/my-images --input-format png --output-format webp\n\
+         \x20 fast-image-converter /tmp/my-images --input-format webp --output-format png\n\
+         \x20 fast-image-converter /tmp/my-images --input-format webp --output-format jpg\n\
+         \x20 fast-image-converter /tmp/my-images --quality 75 --resize cap=1024 --keep-source\n\
+         \x20 cat input.jpg | fast-image-converter --single-file --output-format webp > output.webp\n\
+         \x20 cat input.jpg | fast-image-converter --single-file --output-format webp --json > out.webp 2> report.jsonl\n\
          \n\
          Env:\n\
          \x20 GALLERY_BASE  optional; when set, used as the parent directory for a bare\n\
@@ -1276,7 +1292,9 @@ mod cli_tests {
 
     #[test]
     fn parses_default_invocation() {
-        let cli = parse_cli(&v(&["gallery-compress", "/tmp/x"])).unwrap();
+        // AR-009 AC-6: CLI parsing uses the canonical argv[0]
+        // name; alias coverage lives in `tests/alias_forwarding.rs`.
+        let cli = parse_cli(&v(&["fast-image-converter", "/tmp/x"])).unwrap();
         assert_eq!(
             cli.mode,
             Mode::Batch {
@@ -1290,7 +1308,7 @@ mod cli_tests {
     #[test]
     fn parses_explicit_flags() {
         let cli = parse_cli(&v(&[
-            "gallery-compress",
+            "fast-image-converter",
             "/tmp/x",
             "--input-format",
             "png",
@@ -1305,7 +1323,7 @@ mod cli_tests {
     #[test]
     fn rejects_bad_input_format() {
         let err = parse_cli(&v(&[
-            "gallery-compress",
+            "fast-image-converter",
             "/tmp/x",
             "--input-format",
             "tiff",
@@ -1317,7 +1335,7 @@ mod cli_tests {
     #[test]
     fn rejects_bad_output_format() {
         let err = parse_cli(&v(&[
-            "gallery-compress",
+            "fast-image-converter",
             "/tmp/x",
             "--output-format",
             "gif",
@@ -1328,38 +1346,55 @@ mod cli_tests {
 
     #[test]
     fn rejects_unknown_flag() {
-        let err = parse_cli(&v(&["gallery-compress", "--foo"])).unwrap_err();
+        let err = parse_cli(&v(&["fast-image-converter", "--foo"])).unwrap_err();
         assert_eq!(err, CliError::Usage);
     }
 
     #[test]
     fn rejects_help() {
-        let err = parse_cli(&v(&["gallery-compress", "--help"])).unwrap_err();
+        let err = parse_cli(&v(&["fast-image-converter", "--help"])).unwrap_err();
         assert_eq!(err, CliError::Usage);
     }
 
     #[test]
     fn rejects_missing_positional() {
-        let err = parse_cli(&v(&["gallery-compress"])).unwrap_err();
+        let err = parse_cli(&v(&["fast-image-converter"])).unwrap_err();
         assert_eq!(err, CliError::Usage);
     }
 
     #[test]
     fn rejects_extra_positional() {
-        let err = parse_cli(&v(&["gallery-compress", "/tmp/a", "/tmp/b"])).unwrap_err();
+        let err = parse_cli(&v(&["fast-image-converter", "/tmp/a", "/tmp/b"])).unwrap_err();
         assert_eq!(err, CliError::Usage);
     }
 
     #[test]
     fn parses_single_file_mode() {
-        let cli = parse_cli(&v(&["gallery-compress", "--single-file"])).unwrap();
+        let cli = parse_cli(&v(&["fast-image-converter", "--single-file"])).unwrap();
         assert_eq!(cli.mode, Mode::SingleFile);
     }
 
     #[test]
     fn rejects_single_file_with_positional() {
-        let err = parse_cli(&v(&["gallery-compress", "--single-file", "/tmp/x"])).unwrap_err();
+        let err = parse_cli(&v(&["fast-image-converter", "--single-file", "/tmp/x"])).unwrap_err();
         assert_eq!(err, CliError::AmbiguousMode);
+    }
+
+    #[test]
+    fn parse_cli_ignores_argv_zero_for_aliases() {
+        // AR-009 AC-3 / AC-4: parse_cli must accept any argv[0]
+        // (the alias forwarders spawn this binary with their own
+        // argv[0]). Behaviour must be identical across the
+        // canonical name and both legacy names.
+        let canonical = parse_cli(&v(&["fast-image-converter", "/tmp/x"])).unwrap();
+        let ctw = parse_cli(&v(&["convert-to-webp", "/tmp/x"])).unwrap();
+        let gc = parse_cli(&v(&["gallery-compress", "/tmp/x"])).unwrap();
+        assert_eq!(canonical.mode, ctw.mode);
+        assert_eq!(canonical.mode, gc.mode);
+        assert_eq!(canonical.input_format, ctw.input_format);
+        assert_eq!(canonical.input_format, gc.input_format);
+        assert_eq!(canonical.output_format, ctw.output_format);
+        assert_eq!(canonical.output_format, gc.output_format);
     }
 
     #[test]

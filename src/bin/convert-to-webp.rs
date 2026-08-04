@@ -1,9 +1,9 @@
-//! Legacy compatibility alias for the bash + ImageMagick origin
-//! (`gallery-compress`). Per ADR-0001 § Decision § 5 and
-//! ADR-0003 § Decision § 4 the legacy name survives as a thin
-//! forwarder that emits a one-line deprecation hint on stderr and
-//! forwards the arguments to the canonical `fast-image-converter`
-//! binary.
+//! Deprecated compatibility alias for the v0 product name
+//! (`convert-to-webp`). Per ADR-0003 § Decision § 3 the legacy
+//! product name survives for at least one major version as a
+//! thin forwarder that emits a one-line deprecation hint on stderr
+//! and forwards the arguments to the canonical
+//! `fast-image-converter` binary.
 //!
 //! The forwarder resolves the canonical binary by:
 //!
@@ -16,7 +16,10 @@
 //! 3. Falling back to `fast-image-converter` on `PATH`.
 //!
 //! In every case the forwarder `exec`s the resolved binary with
-//! the same argv. The exit code is preserved.
+//! the same argv. The exit code is preserved. The deprecation hint
+//! is written to stderr before the child process is spawned so
+//! the hint reaches the operator regardless of the canonical
+//! binary's report stream configuration.
 
 use std::env;
 use std::os::unix::process::ExitStatusExt;
@@ -43,7 +46,7 @@ fn main() {
     let args: Vec<String> = env::args().skip(1).collect();
 
     eprintln!(
-        "fast-image-converter: 'gallery-compress' is a legacy alias; \
+        "fast-image-converter: 'convert-to-webp' is a deprecated alias; \
          forwarding the call to fast-image-converter. \
          Update your scripts to invoke fast-image-converter directly."
     );

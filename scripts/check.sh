@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Repository-native quality gate for convert-to-webp (AR-005).
+# Repository-native quality gate for fast-image-converter (AR-005).
 #
 # Runs the same checks the CI workflow (.github/workflows/ci.yml)
 # runs: format, strict Clippy, full test suite, release build, and

@@ -13,7 +13,13 @@ use std::path::PathBuf;
 use std::process::{Command, Stdio};
 
 fn binary() -> &'static str {
-    env!("CARGO_BIN_EXE_convert-to-webp")
+    // AR-009 AC-5: integration tests target the canonical
+    // `fast-image-converter` binary; the legacy names survive as
+    // forwarders and are covered by `tests/alias_forwarding.rs`.
+    // Cargo emits `CARGO_BIN_EXE_<bin>` with the literal hyphenated
+    // bin name (it does not normalise hyphens to underscores for
+    // these environment variables).
+    env!("CARGO_BIN_EXE_fast-image-converter")
 }
 
 fn fixtures() -> PathBuf {
@@ -101,7 +107,7 @@ fn single_file_png_input_round_trip() {
     // Generate a minimal PNG in /tmp so the test doesn't depend on a
     // non-golden PNG fixture.
     let tmp = std::env::temp_dir().join(format!(
-        "convert-to-webp-single-file-png-{}.png",
+        "fast-image-converter-single-file-png-{}.png",
         std::process::id()
     ));
     let img = image::RgbImage::from_fn(96, 64, |x, y| {

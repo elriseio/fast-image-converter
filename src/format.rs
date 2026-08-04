@@ -742,7 +742,7 @@ mod tests {
         let mut p = std::env::temp_dir();
         let seq = SEQ.fetch_add(1, Ordering::SeqCst);
         p.push(format!(
-            "convert-to-webp-test-{}-{}",
+            "fast-image-converter-test-{}-{}",
             std::process::id(),
             seq
         ));

@@ -1,5 +1,7 @@
 [toolchain]
-# Pinned Rust toolchain for convert-to-webp (AR-005 AC-2). Bumping
+# Pinned Rust toolchain for fast-image-converter (AR-005 AC-2;
+# AR-009 AC-7: the canonical product name replaces the historical
+# `convert-to-webp` reference in this CI-adjacent file). Bumping
 # the version here is a deliberate, single-point change. The CI
 # workflow (`.github/workflows/ci.yml`) reads this file via
 # dtolnay/rust-toolchain and the same file governs local

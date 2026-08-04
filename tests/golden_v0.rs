@@ -24,13 +24,19 @@
 //!
 //! ```text
 //! tmp=$(mktemp -d) && cp tests/fixtures/golden_v0/*.jpg "$tmp" && \
-//!   ./target/release/convert-to-webp "$tmp" && \
+//!   ./target/release/fast-image-converter "$tmp" && \
 //!   cp "$tmp"/*.webp tests/fixtures/golden_v0/expected/
 //! ```
 //!
 //! The drift the ADR cares about is BOTH the intra-tree drift
 //! (determinism across two runs) AND the cross-host drift (output
 //! vs the recorded golden at the recorded libwebp version).
+//!
+//! AR-009: the canonical target is `fast-image-converter`; the
+//! legacy names (`convert-to-webp`, `gallery-compress`) survive
+//! as forwarders. The integration tests assert behaviour through
+//! the canonical target; alias coverage lives in
+//! `tests/alias_forwarding.rs`.
 
 use std::fs;
 use std::path::{Path, PathBuf};
@@ -57,7 +63,13 @@ fn fixtures() -> PathBuf {
 }
 
 fn binary() -> &'static str {
-    env!("CARGO_BIN_EXE_convert-to-webp")
+    // AR-009 AC-5: integration tests target the canonical
+    // `fast-image-converter` binary; the legacy names survive as
+    // forwarders and are covered by `tests/alias_forwarding.rs`.
+    // Cargo emits `CARGO_BIN_EXE_<bin>` with the literal hyphenated
+    // bin name (it does not normalise hyphens to underscores for
+    // these environment variables).
+    env!("CARGO_BIN_EXE_fast-image-converter")
 }
 
 fn make_run_dir(label: &str) -> PathBuf {
@@ -67,7 +79,7 @@ fn make_run_dir(label: &str) -> PathBuf {
         .duration_since(std::time::UNIX_EPOCH)
         .unwrap()
         .as_nanos();
-    p.push(format!("convert-to-webp-golden-{label}-{pid}-{nonce}"));
+    p.push(format!("fast-image-converter-golden-{label}-{pid}-{nonce}"));
     fs::create_dir_all(&p).expect("create run dir");
     p
 }
@@ -177,9 +189,13 @@ fn default_pipeline_exits_zero_on_golden_batch() {
         status.success(),
         "default pipeline must exit 0; got {status:?}\nstdout: {stdout}\nstderr: {stderr}"
     );
+    // AR-009 AC-6: the canonical summary line carries the canonical
+    // binary name. Legacy names only appear when the corresponding
+    // alias forwarder is invoked (covered by
+    // `tests/alias_forwarding.rs`).
     assert!(
-        stdout.contains("convert-to-webp:") || stdout.contains("gallery-compress:"),
-        "summary line missing the binary name prefix: {stdout}"
+        stdout.contains("fast-image-converter:"),
+        "summary line missing the canonical binary name prefix: {stdout}"
     );
 }
 
