@@ -33,6 +33,7 @@ struct Cli {
     output_format: Option<Format>,
     quality: Option<u8>,
     resize: Option<crate::format::ResizePolicy>,
+    keep_source: bool,
 }
 
 fn parse_quality(s: &str) -> Result<u8, String> {
@@ -51,6 +52,7 @@ fn parse_cli(args: &[String]) -> Result<Cli, CliError> {
     let mut output_format: Option<Format> = None;
     let mut quality: Option<u8> = None;
     let mut resize: Option<crate::format::ResizePolicy> = None;
+    let mut keep_source = false;
 
     let mut i = 1;
     while i < args.len() {
@@ -80,6 +82,10 @@ fn parse_cli(args: &[String]) -> Result<Cli, CliError> {
                 resize = Some(parse_resize(v).map_err(CliError::BadResize)?);
                 i += 2;
             }
+            "--keep-source" => {
+                keep_source = true;
+                i += 1;
+            }
             "-h" | "--help" => return Err(CliError::Usage),
             other if other.starts_with("--") => {
                 eprintln!(
@@ -105,6 +111,7 @@ fn parse_cli(args: &[String]) -> Result<Cli, CliError> {
         output_format,
         quality,
         resize,
+        keep_source,
     })
 }
 
@@ -180,6 +187,7 @@ fn main() -> ExitCode {
     if let Some(r) = cli.resize {
         params.resize = r;
     }
+    params.keep_source = cli.keep_source;
 
     let candidates: Vec<PathBuf> = match fs::read_dir(&dir) {
         Ok(rd) => rd
@@ -213,7 +221,9 @@ fn main() -> ExitCode {
             let report = codec
                 .convert_one_with(src, &dst, &params)
                 .map_err(|e| format!("{}: {}", src.display(), e))?;
-            fs::remove_file(src).map_err(|e| e.to_string())?;
+            if !params.keep_source {
+                fs::remove_file(src).map_err(|e| e.to_string())?;
+            }
             Ok((report.in_bytes, report.out_bytes))
         })
         .collect();
