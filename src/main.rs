@@ -7,6 +7,7 @@ use rayon::prelude::*;
 
 mod format;
 mod params;
+mod report;
 use format::{
     CodecImpl, Format, JpegToPng, JpegToWebp, PngToJpeg, PngToWebp, WebpToJpeg,
     WebpToPng,
