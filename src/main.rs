@@ -24,11 +24,23 @@ enum CliError {
     BadOutputFormat(String),
     BadQuality(String),
     BadResize(String),
+    AmbiguousMode,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+enum Mode {
+    /// Directory mode: positional arg is the source directory; outputs
+    /// are written next to each input file; the v0 baseline.
+    Batch { dir: PathBuf },
+    /// Single-file mode: bytes are read from stdin, encoded bytes are
+    /// written to stdout, and a single metadata line is emitted on
+    /// stderr. See DE-004.
+    SingleFile,
 }
 
 #[derive(Debug)]
 struct Cli {
-    positional: String,
+    mode: Mode,
     input_format: Option<Format>,
     output_format: Option<Format>,
     quality: Option<u8>,
@@ -53,6 +65,7 @@ fn parse_cli(args: &[String]) -> Result<Cli, CliError> {
     let mut quality: Option<u8> = None;
     let mut resize: Option<crate::format::ResizePolicy> = None;
     let mut keep_source = false;
+    let mut single_file = false;
 
     let mut i = 1;
     while i < args.len() {
@@ -86,6 +99,10 @@ fn parse_cli(args: &[String]) -> Result<Cli, CliError> {
                 keep_source = true;
                 i += 1;
             }
+            "--single-file" | "-1" => {
+                single_file = true;
+                i += 1;
+            }
             "-h" | "--help" => return Err(CliError::Usage),
             other if other.starts_with("--") => {
                 eprintln!(
@@ -105,8 +122,20 @@ fn parse_cli(args: &[String]) -> Result<Cli, CliError> {
         }
     }
 
+    let mode = if single_file {
+        if positional.is_some() {
+            return Err(CliError::AmbiguousMode);
+        }
+        Mode::SingleFile
+    } else {
+        let dir = positional.ok_or(CliError::Usage)?;
+        Mode::Batch {
+            dir: PathBuf::from(dir),
+        }
+    };
+
     Ok(Cli {
-        positional: positional.ok_or(CliError::Usage)?,
+        mode,
         input_format,
         output_format,
         quality,
@@ -134,6 +163,9 @@ fn main() -> ExitCode {
                     "{BINARY_NAME}: invalid --resize: {v} \
                      (expected 'none', 'cap=<W>', or 'auto:portrait=<W>,landscape=<H>')"
                 ),
+                CliError::AmbiguousMode => eprintln!(
+                    "{BINARY_NAME}: --single-file does not accept a directory argument"
+                ),
                 CliError::Usage => {}
             }
             print_usage();
@@ -141,14 +173,26 @@ fn main() -> ExitCode {
         }
     };
 
-    let target = cli.positional;
+    let dir = match &cli.mode {
+        Mode::Batch { dir } => dir.clone(),
+        Mode::SingleFile => {
+            // Single-file mode is implemented in DE-004 commits 2+.
+            // This branch is reachable only if the user explicitly
+            // passes --single-file; commit 1 introduces the parser
+            // state without yet wiring the read/write path.
+            eprintln!(
+                "{BINARY_NAME}: --single-file mode is not yet implemented"
+            );
+            return ExitCode::from(2);
+        }
+    };
     let gallery_base =
         env::var("GALLERY_BASE").unwrap_or_else(|_| DEFAULT_GALLERY_BASE.to_string());
 
-    let dir: PathBuf = if target.contains('/') {
-        PathBuf::from(target)
+    let dir: PathBuf = if dir.to_string_lossy().contains('/') {
+        dir.clone()
     } else {
-        PathBuf::from(&gallery_base).join(target)
+        PathBuf::from(&gallery_base).join(dir)
     };
 
     if !dir.is_dir() {
@@ -324,7 +368,7 @@ mod cli_tests {
     #[test]
     fn parses_default_invocation() {
         let cli = parse_cli(&v(&["gallery-compress", "/tmp/x"])).unwrap();
-        assert_eq!(cli.positional, "/tmp/x");
+        assert_eq!(cli.mode, Mode::Batch { dir: PathBuf::from("/tmp/x") });
         assert_eq!(cli.input_format, None);
         assert_eq!(cli.output_format, None);
     }
@@ -390,6 +434,19 @@ mod cli_tests {
     fn rejects_extra_positional() {
         let err = parse_cli(&v(&["gallery-compress", "/tmp/a", "/tmp/b"])).unwrap_err();
         assert_eq!(err, CliError::Usage);
+    }
+
+    #[test]
+    fn parses_single_file_mode() {
+        let cli = parse_cli(&v(&["gallery-compress", "--single-file"])).unwrap();
+        assert_eq!(cli.mode, Mode::SingleFile);
+    }
+
+    #[test]
+    fn rejects_single_file_with_positional() {
+        let err = parse_cli(&v(&["gallery-compress", "--single-file", "/tmp/x"]))
+            .unwrap_err();
+        assert_eq!(err, CliError::AmbiguousMode);
     }
 
     #[test]
