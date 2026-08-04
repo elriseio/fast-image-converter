@@ -69,6 +69,14 @@ compatible alias; see "Binary rename" below.
 ./target/release/convert-to-webp /tmp/my-images --resize auto:portrait=800,landscape=1000
 ./target/release/convert-to-webp /tmp/my-images --keep-source
 
+# single-file stdin/stdout mode (DE-004)
+cat /tmp/my-images/01.jpg | \
+  ./target/release/convert-to-webp --single-file --output-format webp \
+  > /tmp/01.webp
+cat /tmp/01.webp | \
+  ./target/release/convert-to-webp --single-file --output-format png \
+  > /tmp/01.png
+
 # help
 ./target/release/convert-to-webp --help
 ```
@@ -81,8 +89,42 @@ compatible alias; see "Binary rename" below.
 | `--output-format <fmt>` | `jpg`, `png`, `webp` (case-insensitive) | `webp` | output format |
 | `--quality <n>` | integer in `1..100` | `85` | encode quality (honoured by WebP and JPEG outputs; PNG output is lossless and ignores it) |
 | `--resize <policy>` | `none` \| `cap=<W>` \| `auto:portrait=<W>,landscape=<H>` | `auto:portrait=800,landscape=1000` | resize policy applied before encoding |
-| `--keep-source` | boolean flag | `false` | leave the source file in place after a successful conversion (v0 baseline removes it) |
+| `--keep-source` | boolean flag | `false` | leave the source file in place after a successful conversion (v0 baseline removes it; **batch mode only**, silently ignored in `--single-file`) |
+| `--single-file`, `-1` | boolean flag | `false` | read one image from stdin, encode it, write the encoded bytes to stdout. The encoded bytes are the only thing on stdout; a single-line key=value record on stderr carries the per-file metadata |
 | `-h`, `--help` | — | — | print usage to stderr and exit 2 |
+
+### Single-file mode (DE-004)
+
+The `--single-file` flag switches the binary from batch (directory)
+mode to single-file mode:
+
+- **Input**: image bytes on stdin (raw bytes; no header / framing).
+- **Output**: encoded image bytes on stdout (raw bytes; no header /
+  framing).
+- **Per-file metadata**: a single line on stderr in the
+  documented key=value shape:
+
+  ```
+  status=<ok|err> in_bytes=<N> out_bytes=<N> duration_ms=<N> error=<message>
+  ```
+
+  `error=` is omitted on success and present (with the codec-
+  reported message) on failure. The shape is intentionally simple
+  in v0 and is superseded by `--json` (DE-005) for callers that
+  need structured fields.
+- **`--keep-source`**: silently ignored (no source filesystem path
+  to preserve; stdin has no metadata to remove).
+- **Exit-code contract**: preserved (`0` / `1` / `2`). `2` for
+  wrong invocation (e.g. `--single-file` + a positional argument,
+  or same input/output format); `1` for runtime failure; `0` for
+  success.
+
+The single-file mode is the integration surface for server-side
+callers (Symfony, etc.) that hold the image as an in-memory
+buffer rather than a filesystem path. The output bytes are
+byte-identical to the same conversion via the directory mode (the
+golden-batch regression test under `tests/single_file.rs` enforces
+this).
 
 The default pair `--input-format jpg --output-format webp` is the v0
 `gallery-compress` pipeline preserved bit-for-bit (see ADR-0002).
