@@ -71,7 +71,7 @@ tags: [meta, architect, status, convert-to-webp]
 | Single-file CLI vs library + CLI | CLI only (library API out of scope) | `architecture.md` § 1 Purpose |
 | ImageMagick pipeline vs native libwebp via `image`/`webp` crates | Native (8.5× wall-time win observed in v0 baseline) | `README.md` "Why Rust" |
 | Per-orientation resize policy vs always-uniform policy | Keep v0 per-orientation as the default; allow override | `adr/0002-preserve-jpg-to-webp-baseline.md` |
-| Hard-coded `DEFAULT_GALLERY_BASE` vs env-only vs CLI-only | **Tech debt**: hard-coded absolute host path in `src/main.rs:14-15`. Captured for AR-002 cleanup task; architect MUST NOT touch code. | `RUNBOOK.md` § Tech-debt hot list |
+| Hard-coded `DEFAULT_GALLERY_BASE` vs env-only vs CLI-only | Env-only with explicit "must-be-set" error for bare args. Resolved by `DE-006` (commit `f9f940e`); no host-specific default remains. | `RUNBOOK.md` § RD-001 |
 
 ## 4. Architect Cycles
 
@@ -113,10 +113,11 @@ tags: [meta, architect, status, convert-to-webp]
   canonical binary name will move to `convert-to-webp` (matching
   the project slug); the v0 name is kept as a backward-compatible
   alias until the next major version (see AR-001 § 6 Migration).
-- The hard-coded `DEFAULT_GALLERY_BASE` in `src/main.rs:14-15`
-  contains an absolute host path. This is captured as tech debt
-  for the developer cleanup task AR-002; architect MUST NOT touch
-  it (architect is read-only / write-doc-only on code).
+- The `DEFAULT_GALLERY_BASE` constant in `src/main.rs` was removed
+  by `DE-006` (commit `f9f940e`). A bare positional argument
+  (e.g. a year) now requires `GALLERY_BASE` to be set; the binary
+  no longer carries a host-specific default. Captured as
+  `RUNBOOK.md` § RD-001 (Resolved Defect).
 - The crate name `gallery-compress` and the binary name
   `gallery-compress` are out of sync with the project slug
   `convert-to-webp` after the multi-format scope expansion. The
