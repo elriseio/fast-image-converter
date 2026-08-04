@@ -1,3 +1,7 @@
+---
+output-policy-exempt: justified-rca-evidence DE-006
+---
+
 # Runbook
 
 > **Audience**: operator (human) + developer (on call).
@@ -40,12 +44,14 @@ Arch: `sudo pacman -S base-devel`. Homebrew: `xcode-select --install`.
 
 ### 2.3 `image` crate build failure
 
-Cause: the `image` crate's `default-features = false` + `features = ["jpeg"]`
-selection intentionally disables PNG / WebP decoders inside `image`
-(WebP encoding goes through the dedicated `webp` crate). Adding a new
-format may require extending the `features` list in `Cargo.toml` and
-rebuilding. **Do NOT touch `Cargo.toml` yourself**; the developer owns
-this and will receive a per-format handoff.
+Cause: the `image` crate is pinned with
+`default-features = false` + `features = ["jpeg", "png", "webp"]`
+in `Cargo.toml`, which enables the JPEG / PNG / WebP decoders
+inside `image` (WebP encoding goes through the dedicated `webp`
+crate, architecturally separate). Adding a new input format may
+require extending the `features` list in `Cargo.toml` and
+rebuilding. **Do NOT touch `Cargo.toml` yourself**; the developer
+owns this and will receive a per-format handoff.
 
 ## 3. Runtime Incidents
 

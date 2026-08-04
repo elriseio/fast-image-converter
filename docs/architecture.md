@@ -117,7 +117,7 @@ For component-to-component contracts, see `contracts/`:
 
 | Dependency | Version | Purpose | Risk |
 |---|---|---|---|
-| `image` crate | 0.25 (with `jpeg` feature in baseline) | unified decode API across input formats | API churn between minor versions; pin via `Cargo.lock` |
+| `image` crate | 0.25 (with `jpeg`, `png`, `webp` features enabled in `Cargo.toml`) | unified decode API across input formats | API churn between minor versions; pin via `Cargo.lock` |
 | `webp` crate | 0.3 | WebP encoder binding to `libwebp` | depends on host `libwebp`; build fails if missing |
 | `rayon` crate | 1.10 | data-parallel job dispatcher | none observed at v0 baseline |
 | `libwebp` (host) | 1.6+ | native encoder | ABI drift; pin via `pkg-config` |

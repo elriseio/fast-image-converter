@@ -96,10 +96,10 @@ enum ResizePolicy {
 
 ### 6.3 `webp → png` / `webp → jpg` (Wave 1)
 
-- Decode: `image::ImageReader` auto-detects WebP if the
-  `Cargo.toml` `image` features list includes `webp`. Wave 1
-  requires adding the `webp` decoder feature (architecturally
-  separate from the `webp` crate which is encoder-only).
+- Decode: `image::ImageReader` auto-detects WebP. The
+  `Cargo.toml` `image` features list (`["jpeg", "png", "webp"]`)
+  already enables the WebP decoder feature; the dedicated `webp`
+  crate is encoder-only and is not used on the decode path.
 - Resize: same `PortraitLandscape` policy.
 - Encode: `image::codecs::png::PngEncoder` /
   `image::codecs::jpeg::JpegEncoder`. PNG is lossless; JPEG uses
