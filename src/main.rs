@@ -918,6 +918,119 @@ fn validate_report_fd(fd: i32) -> Result<(), String> {
     Ok(())
 }
 
+/// Low-level writer abstraction used by `retry_write_all` (AR-007
+/// AC-3). The real implementation wraps `libc::write(2)`; tests
+/// inject a `MockReportWriter` that simulates EINTR / EAGAIN /
+/// partial-write behaviour without timing races.
+///
+/// SAFETY CONTRACT: the implementer MUST treat `buf` as
+/// read-only memory that the caller continues to own. The
+/// `libc::write(2)` wrapper in `LibcFdWriter` does not mutate
+/// `buf`; the mock implementations in tests must not either.
+trait ReportFdWriter {
+    fn write(&mut self, buf: &[u8]) -> std::io::Result<usize>;
+}
+
+/// Real `libc::write(2)` wrapper. Holds the destination file
+/// descriptor for the duration of the retry loop.
+struct LibcFdWriter(i32);
+
+impl ReportFdWriter for LibcFdWriter {
+    fn write(&mut self, buf: &[u8]) -> std::io::Result<usize> {
+        // SAFETY: `self.0` is a file descriptor that was validated
+        // for write access by `validate_report_fd` (DE-005 AC-7);
+        // `buf.as_ptr()` points at `buf.len()` readable bytes for
+        // the duration of the call (the borrow lives for the
+        // expression). `libc::write(2)` does not mutate the buffer
+        // and the kernel never retains the pointer past return,
+        // so the temporary pointer cast is sound.
+        let n = unsafe { libc::write(self.0, buf.as_ptr() as *const _, buf.len()) };
+        if n < 0 {
+            Err(std::io::Error::last_os_error())
+        } else {
+            Ok(n as usize)
+        }
+    }
+}
+
+/// Upper bound on EINTR retries. Linux historically returns EINTR
+/// very rarely (only when the process is being shut down by a
+/// signal), but POSIX permits any signal to interrupt a syscall.
+/// 64 retries is well above the practical signal rate and bounds
+/// the worst-case CPU cost (each retry is a single syscall).
+const MAX_EINTR_RETRIES: u32 = 64;
+/// Upper bound on EAGAIN / EWOULDBLOCK retries when the operator
+/// has set `O_NONBLOCK` on the report fd. The backoff doubles each
+/// attempt up to 1 ms, then caps; 16 attempts is enough to survive
+/// a brief buffer-full window but caps the wait at ~16 ms.
+const MAX_EAGAIN_RETRIES: u32 = 16;
+
+/// Write `buf` to `writer` in full, retrying on partial writes,
+/// EINTR (signal interruption), and EAGAIN / EWOULDBLOCK (the
+/// fd was marked `O_NONBLOCK` and the kernel buffer was full).
+/// On persistent EAGAIN the loop backs off with exponential delay
+/// up to 1 ms per attempt. The retry counts are bounded by
+/// `MAX_EINTR_RETRIES` and `MAX_EAGAIN_RETRIES` so the call cannot
+/// spin indefinitely (AR-007 AC-2).
+///
+/// Returns `Ok(())` only when every byte of `buf` has been written.
+/// Other `io::Error`s are returned to the caller without retry;
+/// the report stream is best-effort and a write failure must not
+/// crash the binary.
+fn retry_write_all<W: ReportFdWriter>(writer: &mut W, buf: &[u8]) -> std::io::Result<()> {
+    let mut eintr_retries: u32 = 0;
+    let mut eagain_retries: u32 = 0;
+    let mut written = 0;
+    while written < buf.len() {
+        match writer.write(&buf[written..]) {
+            Ok(0) => {
+                // Treat a 0-byte result the same as EAGAIN: the
+                // kernel made no progress this round. Bounded by
+                // `MAX_EAGAIN_RETRIES` so a permanently stuck fd
+                // surfaces an error rather than spinning forever.
+                eagain_retries += 1;
+                if eagain_retries > MAX_EAGAIN_RETRIES {
+                    return Err(std::io::Error::new(
+                        std::io::ErrorKind::WriteZero,
+                        "report fd write returned 0 repeatedly",
+                    ));
+                }
+                let shift = eagain_retries.saturating_sub(1).min(5);
+                let micros = 50u64.saturating_mul(1u64 << shift).min(1000);
+                std::thread::sleep(std::time::Duration::from_micros(micros));
+            }
+            Ok(n) => {
+                written += n;
+                eintr_retries = 0;
+                eagain_retries = 0;
+            }
+            Err(e)
+                if e.raw_os_error() == Some(libc::EINTR)
+                    || e.raw_os_error() == Some(libc::EAGAIN)
+                    || e.raw_os_error() == Some(libc::EWOULDBLOCK) =>
+            {
+                let is_eintr = e.raw_os_error() == Some(libc::EINTR);
+                if is_eintr {
+                    eintr_retries += 1;
+                    if eintr_retries > MAX_EINTR_RETRIES {
+                        return Err(e);
+                    }
+                } else {
+                    eagain_retries += 1;
+                    if eagain_retries > MAX_EAGAIN_RETRIES {
+                        return Err(e);
+                    }
+                    let shift = eagain_retries.saturating_sub(1).min(5);
+                    let micros = 50u64.saturating_mul(1u64 << shift).min(1000);
+                    std::thread::sleep(std::time::Duration::from_micros(micros));
+                }
+            }
+            Err(e) => return Err(e),
+        }
+    }
+    Ok(())
+}
+
 /// Emit one line of report output to `fd`, terminated with `\n`.
 /// For `fd == 2` (the default) this delegates to `eprintln!`
 /// which acquires the stderr lock and writes the full line
@@ -927,31 +1040,23 @@ fn validate_report_fd(fd: i32) -> Result<(), String> {
 /// guarantees atomic writes up to `PIPE_BUF` only on regular
 /// files / pipes; the mutex is the portable line-atomicity
 /// guarantee we provide).
+///
+/// Writes to non-stderr fds go through `retry_write_all` (AR-007
+/// AC-1: EINTR retried, partial writes retried, bounded EAGAIN
+/// retries; AC-2: no unbounded spin).
 fn emit_report_line(fd: i32, line: &str) {
     if fd == 2 {
         eprintln!("{}", line);
         return;
     }
     let _guard = report_fd_lock().lock().unwrap_or_else(|e| e.into_inner());
-    let bytes = line.as_bytes();
-    let mut written = 0;
-    while written < bytes.len() {
-        let n = unsafe {
-            libc::write(
-                fd,
-                bytes[written..].as_ptr() as *const _,
-                bytes.len() - written,
-            )
-        };
-        if n <= 0 {
-            return;
-        }
-        written += n as usize;
+    let mut writer = LibcFdWriter(fd);
+    let payload = line.as_bytes();
+    if retry_write_all(&mut writer, payload).is_err() {
+        return;
     }
     let newline: [u8; 1] = *b"\n";
-    unsafe {
-        libc::write(fd, newline.as_ptr() as *const _, 1);
-    }
+    let _ = retry_write_all(&mut writer, &newline);
 }
 
 fn report_fd_lock() -> &'static std::sync::Mutex<()> {
@@ -1267,5 +1372,179 @@ mod cli_tests {
         assert_eq!(Format::parse("webp"), Some(Format::Webp));
         assert_eq!(Format::parse("WebP"), Some(Format::Webp));
         assert_eq!(Format::parse("tiff"), None);
+    }
+}
+
+// AR-007 AC-3: tests exercise partial / interrupted / non-blocking
+// write behaviour through the `ReportFdWriter` abstraction, without
+// relying on kernel-level timing races. The mock is a deterministic
+// state machine: each call to `write()` returns the next scripted
+// outcome, then advances. EINTR and EAGAIN are explicit so the
+// retry counts are observable.
+#[cfg(test)]
+mod report_fd_writer_tests {
+    use super::*;
+    use std::io::ErrorKind;
+    use std::os::fd::IntoRawFd;
+
+    /// Scripted mock that returns a pre-recorded list of
+    /// `io::Result<usize>` outcomes. After the list is exhausted,
+    /// subsequent calls panic so the test fails loudly rather than
+    /// silently diverging from the script.
+    struct ScriptedWriter {
+        script: Vec<std::io::Result<usize>>,
+        collected: Vec<u8>,
+    }
+
+    impl ScriptedWriter {
+        #[allow(dead_code)]
+        fn ok(n: usize) -> std::io::Result<usize> {
+            Ok(n)
+        }
+        fn err_os(_kind: ErrorKind, errno: i32) -> std::io::Result<usize> {
+            Err(std::io::Error::from_raw_os_error(errno))
+        }
+    }
+
+    impl ReportFdWriter for ScriptedWriter {
+        fn write(&mut self, buf: &[u8]) -> std::io::Result<usize> {
+            let outcome = self.script.remove(0);
+            let n = outcome?;
+            self.collected.extend_from_slice(&buf[..n]);
+            Ok(n)
+        }
+    }
+
+    fn collect(buf: &[u8]) -> Vec<u8> {
+        buf.to_vec()
+    }
+
+    #[test]
+    fn retry_write_all_writes_full_buffer_on_first_try() {
+        let mut w = ScriptedWriter {
+            script: vec![Ok(5), Ok(3)],
+            collected: Vec::new(),
+        };
+        retry_write_all(&mut w, b"abcdefgh").unwrap();
+        assert_eq!(w.collected, b"abcdefgh");
+        // First call wrote 5 bytes; second call wrote the remaining 3.
+        assert_eq!(w.script.len(), 0, "unexpected extra calls");
+    }
+
+    #[test]
+    fn retry_write_all_retries_eintr_then_succeeds() {
+        let payload = b"hello";
+        // First call returns EINTR (no bytes written); second
+        // call writes the full payload.
+        let mut w = ScriptedWriter {
+            script: vec![
+                ScriptedWriter::err_os(ErrorKind::Interrupted, libc::EINTR),
+                Ok(payload.len()),
+            ],
+            collected: Vec::new(),
+        };
+        retry_write_all(&mut w, payload).unwrap();
+        assert_eq!(w.collected, payload);
+    }
+
+    #[test]
+    fn retry_write_all_retries_eagain_then_succeeds() {
+        let payload = b"world";
+        let mut w = ScriptedWriter {
+            script: vec![
+                ScriptedWriter::err_os(ErrorKind::WouldBlock, libc::EAGAIN),
+                ScriptedWriter::err_os(ErrorKind::WouldBlock, libc::EWOULDBLOCK),
+                Ok(payload.len()),
+            ],
+            collected: Vec::new(),
+        };
+        retry_write_all(&mut w, payload).unwrap();
+        assert_eq!(w.collected, payload);
+    }
+
+    #[test]
+    fn retry_write_all_retries_partial_writes_until_full() {
+        // 1-byte payload is split across three partial writes; the
+        // third call writes the last byte. The retry loop must
+        // accumulate the total without truncating the NDJSON record.
+        let mut w = ScriptedWriter {
+            script: vec![Ok(0), Ok(0), Ok(1)],
+            collected: Vec::new(),
+        };
+        retry_write_all(&mut w, b"x").unwrap();
+        assert_eq!(w.collected, b"x");
+    }
+
+    #[test]
+    fn retry_write_all_bails_when_eagain_exceeds_budget() {
+        // MAX_EAGAIN_RETRIES + 1 transient EAGAINs; the loop must
+        // surface the final error and not spin indefinitely.
+        let mut script = Vec::new();
+        for _ in 0..=(MAX_EAGAIN_RETRIES) {
+            script.push(ScriptedWriter::err_os(ErrorKind::WouldBlock, libc::EAGAIN));
+        }
+        let mut w = ScriptedWriter {
+            script,
+            collected: Vec::new(),
+        };
+        let result = retry_write_all(&mut w, b"never");
+        assert!(result.is_err());
+        assert_eq!(result.unwrap_err().raw_os_error(), Some(libc::EAGAIN));
+    }
+
+    #[test]
+    fn retry_write_all_surfaces_non_transient_errors_without_retry() {
+        // EPIPE is not retryable; the function must surface it
+        // immediately rather than retrying.
+        let mut w = ScriptedWriter {
+            script: vec![ScriptedWriter::err_os(ErrorKind::BrokenPipe, libc::EPIPE)],
+            collected: Vec::new(),
+        };
+        let result = retry_write_all(&mut w, b"x");
+        assert_eq!(result.unwrap_err().raw_os_error(), Some(libc::EPIPE));
+    }
+
+    #[test]
+    fn retry_write_all_treats_repeated_write_zero_as_unrecoverable() {
+        // `write(2)` returning 0 is rare in practice (a non-blocking
+        // fd with an empty kernel buffer returns EAGAIN, not 0);
+        // however a misbehaving fd could return 0 forever. After
+        // `MAX_EAGAIN_RETRIES + 1` consecutive zeros the loop must
+        // surface a `WriteZero` error rather than spin.
+        let mut script = Vec::new();
+        for _ in 0..=(MAX_EAGAIN_RETRIES) {
+            script.push(Ok(0));
+        }
+        let mut w = ScriptedWriter {
+            script,
+            collected: Vec::new(),
+        };
+        let result = retry_write_all(&mut w, b"x");
+        assert_eq!(result.unwrap_err().kind(), ErrorKind::WriteZero);
+    }
+
+    // The LibcFdWriter wrapper is exercised by the integration tests
+    // that pipe NDJSON to a real fd via the --report-fd flag; the
+    // unit tests above cover the retry semantics without any
+    // dependency on the kernel scheduler.
+    #[test]
+    fn libc_fd_writer_smoke() {
+        // Write to /dev/null via the wrapper; success means the
+        // retry path returned Ok(()).
+        let devnull = std::fs::OpenOptions::new()
+            .write(true)
+            .open("/dev/null")
+            .expect("open /dev/null");
+        let fd = devnull.into_raw_fd();
+        let mut w = LibcFdWriter(fd);
+        retry_write_all(&mut w, b"this is silently discarded").unwrap();
+        let _ = unsafe { libc::close(fd) };
+    }
+
+    // Helper to silence unused-import warnings when this module's
+    // `fn collect` helper is not used by every test.
+    #[allow(dead_code)]
+    fn unused() {
+        let _ = collect(&[]);
     }
 }

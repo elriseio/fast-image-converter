@@ -160,22 +160,17 @@ pub trait Codec {
         image::load_from_memory(bytes).map_err(|e| CodecError::Decode(e.to_string()))
     }
 
-    /// Encode the decoded image into a byte buffer. The default impl
-    /// writes to `dst` and reads the bytes back; codecs that already
-    /// build the bytes in memory override this for efficiency.
-    fn encode_to_vec(&self, img: &image::DynamicImage, quality: u8) -> Result<Vec<u8>, CodecError> {
-        // Default: write to a tempfile, read back. The webp / png /
-        // jpeg codecs all override this with a direct buffer build.
-        let tmp = std::env::temp_dir().join(format!(
-            "convert-to-webp-encode-{}-{quality}.bin",
-            std::process::id()
-        ));
-        let n = self.encode_with_quality(img, &tmp, quality)?;
-        let bytes = std::fs::read(&tmp).map_err(|e| CodecError::Io(e.to_string()))?;
-        let _ = std::fs::remove_file(&tmp);
-        debug_assert_eq!(bytes.len() as u64, n);
-        Ok(bytes)
-    }
+    /// Encode the decoded image into an in-memory byte buffer. This
+    /// method has no default implementation (AR-007 AC-5): every
+    /// concrete codec must build the bytes directly without going
+    /// through a temporary file. The previous default implementation
+    /// wrote to a path derived from `std::process::id()` in
+    /// `std::env::temp_dir()` — predictable across concurrent
+    /// conversions from the same process and removable by a
+    /// hostile actor with write access to `/tmp` (AR-007 AC-4).
+    /// Removing it forces every codec to allocate its own
+    /// `Vec<u8>` and eliminates the predictable temporary path.
+    fn encode_to_vec(&self, img: &image::DynamicImage, quality: u8) -> Result<Vec<u8>, CodecError>;
 
     /// Encode the decoded image to `dst` and return the number of bytes
     /// written. The codec is responsible for the directory-existence
