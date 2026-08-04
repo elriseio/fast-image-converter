@@ -29,3 +29,9 @@ codegen-units = 1
 image = { version = "0.25", default-features = false, features = ["jpeg", "png", "webp"] }
 rayon = "1.10"
 webp = "0.3"
+# `libc` is used by `--report-fd` validation (fcntl / F_GETFL) to
+# verify that the operator-supplied fd is open for writing; it is
+# already a transitive dep of the `webp` crate (via `webp-sys`) but
+# listed explicitly here because the binary uses the symbol
+# directly. DE-005 AC-7.
+libc = "0.2"

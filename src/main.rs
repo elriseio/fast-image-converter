@@ -27,6 +27,7 @@ enum CliError {
     BadOutputFormat(String),
     BadQuality(String),
     BadResize(String),
+    BadReportFd(String),
     AmbiguousMode,
 }
 
@@ -52,6 +53,12 @@ struct Cli {
     /// Emit the per-file metadata line as a structured NDJSON
     /// record instead of the v0 key=value shape. Per DE-005.
     json: bool,
+    /// File descriptor the per-file report stream is written to.
+    /// Defaults to 2 (stderr). Override with `--report-fd <N>`;
+    /// N=1 is forbidden (would collide with the encoded bytes in
+    /// single-file mode) and non-writable fds are rejected with
+    /// usage + exit 2. Per DE-005 AC-7.
+    report_fd: i32,
 }
 
 fn parse_quality(s: &str) -> Result<u8, String> {
@@ -73,6 +80,7 @@ fn parse_cli(args: &[String]) -> Result<Cli, CliError> {
     let mut keep_source = false;
     let mut single_file = false;
     let mut json = false;
+    let mut report_fd: i32 = 2;
 
     let mut i = 1;
     while i < args.len() {
@@ -114,6 +122,20 @@ fn parse_cli(args: &[String]) -> Result<Cli, CliError> {
                 json = true;
                 i += 1;
             }
+            "--report-fd" => {
+                let v = args.get(i + 1).ok_or(CliError::Usage)?;
+                let n: i64 = v.parse().map_err(|_| {
+                    CliError::BadReportFd(format!("{v:?}: not an integer"))
+                })?;
+                if n < 0 || n > i32::MAX as i64 {
+                    return Err(CliError::BadReportFd(format!(
+                        "{v:?}: out of range 0..{}",
+                        i32::MAX
+                    )));
+                }
+                report_fd = n as i32;
+                i += 2;
+            }
             "-h" | "--help" => return Err(CliError::Usage),
             other if other.starts_with("--") => {
                 eprintln!(
@@ -153,6 +175,7 @@ fn parse_cli(args: &[String]) -> Result<Cli, CliError> {
         resize,
         keep_source,
         json,
+        report_fd,
     })
 }
 
@@ -175,6 +198,9 @@ fn main() -> ExitCode {
                     "{BINARY_NAME}: invalid --resize: {v} \
                      (expected 'none', 'cap=<W>', or 'auto:portrait=<W>,landscape=<H>')"
                 ),
+                CliError::BadReportFd(v) => eprintln!(
+                    "{BINARY_NAME}: invalid --report-fd: {v} (expected integer 0, 2, or a writable fd)"
+                ),
                 CliError::AmbiguousMode => eprintln!(
                     "{BINARY_NAME}: --single-file does not accept a positional argument"
                 ),
@@ -184,6 +210,14 @@ fn main() -> ExitCode {
             return ExitCode::from(2);
         }
     };
+
+    // Per DE-005 AC-7: N=1 is forbidden; values other than 1, 2,
+    // or a writable integer fd are rejected with usage + exit 2.
+    if let Err(msg) = validate_report_fd(cli.report_fd) {
+        eprintln!("{BINARY_NAME}: {msg}");
+        print_usage();
+        return ExitCode::from(2);
+    }
 
     let dir = match &cli.mode {
         Mode::Batch { dir } => dir.clone(),
@@ -591,13 +625,20 @@ fn emit_single_file_success_report(
     duration_ms: u64,
 ) {
     if !cli.json {
-        emit_single_file_metadata(
-            "ok",
-            in_bytes,
-            out_bytes,
-            duration_ms,
-            None,
-        );
+        if cli.report_fd == 2 {
+            emit_single_file_metadata(
+                "ok",
+                in_bytes,
+                out_bytes,
+                duration_ms,
+                None,
+            );
+        } else {
+            let line = format!(
+                "status=ok in_bytes={in_bytes} out_bytes={out_bytes} duration_ms={duration_ms}"
+            );
+            emit_report_line(cli.report_fd, &line);
+        }
         return;
     }
     use crate::report::{
@@ -626,7 +667,7 @@ fn emit_single_file_success_report(
         duration_ms,
         error: None,
     };
-    eprintln!("{}", report.to_json());
+    emit_report_line(cli.report_fd, &report.to_json());
 }
 
 /// Emit a failure-path single-file report on stderr. When `--json`
@@ -661,13 +702,21 @@ fn emit_single_file_failure_report(
             crate::report::ErrorKind::Io => "io error",
         };
         let full_msg = format!("{kind_str}: {error_msg}");
-        emit_single_file_metadata(
-            "err",
-            in_bytes,
-            out_bytes,
-            duration_ms,
-            Some(&full_msg),
-        );
+        if cli.report_fd == 2 {
+            emit_single_file_metadata(
+                "err",
+                in_bytes,
+                out_bytes,
+                duration_ms,
+                Some(&full_msg),
+            );
+        } else {
+            let line = format!(
+                "status=err in_bytes={in_bytes} out_bytes={out_bytes} \
+                 duration_ms={duration_ms} error={full_msg}"
+            );
+            emit_report_line(cli.report_fd, &line);
+        }
         return;
     }
     use crate::report::{
@@ -709,7 +758,7 @@ fn emit_single_file_failure_report(
             message: error_msg.to_string(),
         }),
     };
-    eprintln!("{}", report.to_json());
+    emit_report_line(cli.report_fd, &report.to_json());
 }
 
 /// Format a `ResizePolicy` back to its CLI string form so the
@@ -736,6 +785,100 @@ fn host_meta() -> crate::report::HostMeta {
         libwebp_version: "1.6.0",
         build_commit_sha: None,
     }
+}
+
+/// Validate the `--report-fd` argument per DE-005 AC-7. Returns
+/// `Ok(())` if `fd` is an acceptable report stream, `Err(msg)`
+/// otherwise. The accepted set is:
+///
+/// - `fd == 2` (the conventional stderr fd); accepted without
+///   further checks (the runtime may have closed stderr; if so,
+///   writes fail but the binary stays consistent).
+/// - `fd` is a positive integer that, when queried via
+///   `fcntl(F_GETFL)`, reports an access mode of `O_WRONLY` or
+///   `O_RDWR`. Read-only fds are rejected.
+/// - `fd == 0` (stdin) is accepted only if it is open for
+///   writing (rare, but the validation is correct).
+///
+/// `fd == 1` (stdout) is **forbidden** regardless of access mode:
+/// in single-file mode stdout carries the encoded bytes and the
+/// report stream would collide with the payload.
+fn validate_report_fd(fd: i32) -> Result<(), String> {
+    if fd == 1 {
+        return Err(
+            "--report-fd 1 is forbidden (would collide with the encoded bytes \
+             in single-file mode)"
+                .to_string(),
+        );
+    }
+    if fd == 2 {
+        return Ok(());
+    }
+    if fd < 0 {
+        return Err(format!("--report-fd must be a non-negative integer; got {fd}"));
+    }
+    // fcntl(fd, F_GETFL): returns -1 with errno=EBADF if the fd
+    // is not open, or the file status flags otherwise.
+    let flags = unsafe { libc::fcntl(fd, libc::F_GETFL) };
+    if flags < 0 {
+        return Err(format!(
+            "--report-fd {fd}: fd is not open or not a valid file descriptor"
+        ));
+    }
+    // O_ACCMODE is the access-mode mask (O_RDONLY / O_WRONLY /
+    // O_RDWR). A read-only fd is rejected.
+    let accmode = flags & libc::O_ACCMODE as i32;
+    if accmode != libc::O_WRONLY && accmode != libc::O_RDWR {
+        return Err(format!(
+            "--report-fd {fd}: fd is not open for writing"
+        ));
+    }
+    Ok(())
+}
+
+/// Emit one line of report output to `fd`, terminated with `\n`.
+/// For `fd == 2` (the default) this delegates to `eprintln!`
+/// which acquires the stderr lock and writes the full line
+/// atomically. For any other fd, a process-wide mutex serialises
+/// non-stderr writes so the rayon-driven batch path cannot
+/// interleave bytes from different JSON lines on a pipe (POSIX
+/// guarantees atomic writes up to `PIPE_BUF` only on regular
+/// files / pipes; the mutex is the portable line-atomicity
+/// guarantee we provide).
+fn emit_report_line(fd: i32, line: &str) {
+    if fd == 2 {
+        eprintln!("{}", line);
+        return;
+    }
+    let _guard = report_fd_lock()
+        .lock()
+        .unwrap_or_else(|e| e.into_inner());
+    let bytes = line.as_bytes();
+    let mut written = 0;
+    while written < bytes.len() {
+        let n = unsafe {
+            libc::write(
+                fd,
+                bytes[written..].as_ptr() as *const _,
+                bytes.len() - written,
+            )
+        };
+        if n <= 0 {
+            return;
+        }
+        written += n as usize;
+    }
+    let newline: [u8; 1] = [b'\n'];
+    unsafe {
+        libc::write(fd, newline.as_ptr() as *const _, 1);
+    }
+}
+
+fn report_fd_lock() -> &'static std::sync::Mutex<()> {
+    use std::sync::Mutex;
+    use std::sync::OnceLock;
+    static LOCK: OnceLock<Mutex<()>> = OnceLock::new();
+    LOCK.get_or_init(|| Mutex::new(()))
 }
 
 /// Return the inner message of a `CodecError` without the
@@ -766,7 +909,7 @@ fn codec_error_kind(e: &crate::format::CodecError) -> crate::report::ErrorKind {
 /// the line is emitted as soon as the candidate finishes, in
 /// completion order (no enclosing array).
 fn emit_batch_record_success(
-    _cli: &Cli,
+    cli: &Cli,
     input_format: Format,
     output_format: Format,
     params: &crate::params::Params,
@@ -804,14 +947,14 @@ fn emit_batch_record_success(
     // the caller's NDJSON line index identifies the file in
     // completion order (per DE-005 § 2).
     let _ = src;
-    eprintln!("{}", r.to_json());
+    emit_report_line(cli.report_fd, &r.to_json());
 }
 
 /// Emit one NDJSON line for a batch-mode codec failure (decode /
 /// encode / write). `in_bytes` is the source byte count when
 /// known (0 when decode never ran); output dims are absent.
 fn emit_batch_record_failure(
-    _cli: &Cli,
+    cli: &Cli,
     input_format: Format,
     _output_format: Format,
     params: &crate::params::Params,
@@ -851,7 +994,7 @@ fn emit_batch_record_failure(
         }),
     };
     let _ = src;
-    eprintln!("{}", r.to_json());
+    emit_report_line(cli.report_fd, &r.to_json());
 }
 
 /// Emit one NDJSON line for a post-conversion source-delete
@@ -860,7 +1003,7 @@ fn emit_batch_record_failure(
 /// dimensions because the codec returned Ok; the error.kind is
 /// Io and the message names the delete step.
 fn emit_batch_record_io_failure(
-    _cli: &Cli,
+    cli: &Cli,
     input_format: Format,
     output_format: Format,
     params: &crate::params::Params,
@@ -899,15 +1042,17 @@ fn emit_batch_record_io_failure(
         }),
     };
     let _ = src;
-    eprintln!("{}", r.to_json());
+    emit_report_line(cli.report_fd, &r.to_json());
 }
 
 fn print_usage() {
     eprintln!(
         "Usage: convert-to-webp <dir> [--input-format <fmt>] [--output-format <fmt>]\n\
          \x20                      [--quality <1..100>] [--resize <policy>] [--keep-source]\n\
+         \x20                      [--json] [--report-fd <N>]\n\
          \x20      convert-to-webp --single-file [--input-format <fmt>] [--output-format <fmt>]\n\
          \x20                      [--quality <1..100>] [--resize <policy>]\n\
+         \x20                      [--json] [--report-fd <N>]\n\
          \n\
          Arguments:\n\
          \x20 <dir>                  directory containing the input images (batch mode)\n\
@@ -919,6 +1064,8 @@ fn print_usage() {
          \x20 --resize <policy>      'none' | 'cap=<W>' | 'auto:portrait=<W>,landscape=<H>' (default: auto:portrait=800,landscape=1000)\n\
          \x20 --keep-source          leave the source file in place after a successful conversion (batch mode only)\n\
          \x20 --single-file, -1      read one image from stdin, write the encoded image to stdout\n\
+         \x20 --json                 emit the per-file report as a structured NDJSON record (DE-005) instead of the v0 key=value line\n\
+         \x20 --report-fd <N>        override the report stream fd (default 2; N=1 is forbidden)\n\
          \x20 -h, --help             show this help\n\
          \n\
          Examples:\n\
@@ -928,6 +1075,7 @@ fn print_usage() {
          \x20 convert-to-webp /tmp/my-images --input-format webp --output-format jpg\n\
          \x20 convert-to-webp /tmp/my-images --quality 75 --resize cap=1024 --keep-source\n\
          \x20 cat input.jpg | convert-to-webp --single-file --output-format webp > output.webp\n\
+         \x20 cat input.jpg | convert-to-webp --single-file --output-format webp --json > out.webp 2> report.jsonl\n\
          \n\
          Env:\n\
          \x20 GALLERY_BASE  default: {DEFAULT_GALLERY_BASE}"
