@@ -21,6 +21,7 @@ enum CliError {
     Usage,
     BadInputFormat(String),
     BadOutputFormat(String),
+    BadQuality(String),
 }
 
 #[derive(Debug)]
@@ -28,12 +29,25 @@ struct Cli {
     positional: String,
     input_format: Option<Format>,
     output_format: Option<Format>,
+    #[allow(dead_code)] // wired into codec invocation in DE-003 commit 4
+    quality: Option<u8>,
+}
+
+fn parse_quality(s: &str) -> Result<u8, String> {
+    let n: i64 = s
+        .parse()
+        .map_err(|_| format!("not an integer: {s}"))?;
+    if !(1..=100).contains(&n) {
+        return Err(format!("{n} out of range 1..100"));
+    }
+    Ok(n as u8)
 }
 
 fn parse_cli(args: &[String]) -> Result<Cli, CliError> {
     let mut positional: Option<String> = None;
     let mut input_format: Option<Format> = None;
     let mut output_format: Option<Format> = None;
+    let mut quality: Option<u8> = None;
 
     let mut i = 1;
     while i < args.len() {
@@ -51,6 +65,11 @@ fn parse_cli(args: &[String]) -> Result<Cli, CliError> {
                 output_format = Some(Format::parse(v).ok_or_else(|| {
                     CliError::BadOutputFormat((*v).clone())
                 })?);
+                i += 2;
+            }
+            "--quality" => {
+                let v = args.get(i + 1).ok_or(CliError::Usage)?;
+                quality = Some(parse_quality(v).map_err(CliError::BadQuality)?);
                 i += 2;
             }
             "-h" | "--help" => return Err(CliError::Usage),
@@ -76,6 +95,7 @@ fn parse_cli(args: &[String]) -> Result<Cli, CliError> {
         positional: positional.ok_or(CliError::Usage)?,
         input_format,
         output_format,
+        quality,
     })
 }
 
@@ -90,6 +110,9 @@ fn main() -> ExitCode {
                 ),
                 CliError::BadOutputFormat(v) => eprintln!(
                     "{BINARY_NAME}: invalid --output-format: {v} (expected jpg, png, or webp)"
+                ),
+                CliError::BadQuality(v) => eprintln!(
+                    "{BINARY_NAME}: invalid --quality: {v} (expected integer in 1..100)"
                 ),
                 CliError::Usage => {}
             }
