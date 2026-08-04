@@ -335,7 +335,17 @@ fn main() -> ExitCode {
     candidates.par_iter().for_each(|src| {
         let started = Instant::now();
         let dst = src.with_extension(codec.output_extension());
-        let conv = codec.convert_one_with(src, &dst, &params);
+        // AR-006 AC-2: reject oversized source files BEFORE decode so
+        // the rayon worker never reads past the per-file byte limit.
+        // The check uses `fs::metadata` (no I/O on the source bytes),
+        // so the bound is enforced without spending time or memory
+        // on the actual payload.
+        let conv = fs::metadata(src)
+            .map_err(|e| crate::format::CodecError::Io(e.to_string()))
+            .and_then(|m| {
+                crate::format::check_input_size(m.len()).map_err(crate::format::CodecError::Io)?;
+                codec.convert_one_with(src, &dst, &params)
+            });
         let duration_ms = started.elapsed().as_millis() as u64;
         let (bytes_in, bytes_out) = match &conv {
             Ok(r) => (r.in_bytes, r.out_bytes),
@@ -479,24 +489,60 @@ fn run_single_file(cli: &Cli) -> ExitCode {
 
     let started = Instant::now();
     let mut in_bytes_buf = Vec::new();
-    if let Err(e) = std::io::stdin().read_to_end(&mut in_bytes_buf) {
-        let ctx = ReportContext {
-            cli,
-            input_format,
-            output_format,
-            params: &params,
-            duration_ms: started.elapsed().as_millis() as u64,
-        };
-        emit_single_file_failure_report(
-            &ctx,
-            0,
-            None,
-            0,
-            None,
-            crate::report::ErrorKind::Io,
-            &format!("cannot read stdin: {e}"),
-        );
-        return ExitCode::from(1);
+    // AR-006 AC-1: bound stdin at `MAX_STDIN_BYTES + 1` so an
+    // oversized payload is detected without reading it fully into
+    // memory. `take(MAX+1)` stops the read once that many bytes are
+    // observed; the `+1` lets us distinguish "exactly MAX" (allowed)
+    // from "at least MAX+1" (rejected). The Vec may still grow up to
+    // MAX+1 bytes, which is well within the binary's working set.
+    let stdin_limit = crate::format::MAX_STDIN_BYTES.saturating_add(1);
+    let read_result = std::io::stdin()
+        .take(stdin_limit)
+        .read_to_end(&mut in_bytes_buf);
+    match read_result {
+        Err(e) => {
+            let ctx = ReportContext {
+                cli,
+                input_format,
+                output_format,
+                params: &params,
+                duration_ms: started.elapsed().as_millis() as u64,
+            };
+            emit_single_file_failure_report(
+                &ctx,
+                0,
+                None,
+                0,
+                None,
+                crate::report::ErrorKind::Io,
+                &format!("cannot read stdin: {e}"),
+            );
+            return ExitCode::from(1);
+        }
+        Ok(_) if in_bytes_buf.len() as u64 > crate::format::MAX_STDIN_BYTES => {
+            let ctx = ReportContext {
+                cli,
+                input_format,
+                output_format,
+                params: &params,
+                duration_ms: started.elapsed().as_millis() as u64,
+            };
+            emit_single_file_failure_report(
+                &ctx,
+                crate::format::MAX_STDIN_BYTES,
+                None,
+                0,
+                None,
+                crate::report::ErrorKind::Io,
+                &format!(
+                    "stdin input exceeds the per-file limit of {} bytes; see \
+                     docs/contracts/codec-bounds.md § 4",
+                    crate::format::MAX_STDIN_BYTES
+                ),
+            );
+            return ExitCode::from(1);
+        }
+        Ok(_) => {}
     }
 
     let img = match codec.decode_bytes(&in_bytes_buf) {
@@ -522,6 +568,32 @@ fn run_single_file(cli: &Cli) -> ExitCode {
             return ExitCode::from(1);
         }
     };
+
+    // AR-006 AC-3 / AC-4: reject oversized decoded dimensions before
+    // any allocation that depends on width * height. The codecs'
+    // checked_pixel_capacity helper enforces the same bound at the
+    // allocation site (see src/format.rs); this early check produces
+    // a single, well-shaped report rather than a chain of partial
+    // failures from inside the codec.
+    if let Err(msg) = crate::format::check_dimensions(img.width(), img.height()) {
+        let ctx = ReportContext {
+            cli,
+            input_format,
+            output_format,
+            params: &params,
+            duration_ms: started.elapsed().as_millis() as u64,
+        };
+        emit_single_file_failure_report(
+            &ctx,
+            in_bytes_buf.len() as u64,
+            Some((img.width(), img.height())),
+            0,
+            None,
+            crate::report::ErrorKind::Decode,
+            &msg,
+        );
+        return ExitCode::from(1);
+    }
 
     let resized = crate::format::apply_resize(&img, params.resize);
 

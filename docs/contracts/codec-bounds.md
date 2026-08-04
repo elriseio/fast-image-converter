@@ -62,6 +62,21 @@ converter-core  <--(Result<Counts, CodecError>)--  format-codecs
   + same `CodecParams`, repeated invocations MUST produce
   byte-identical output (modulo host `libwebp` version pinning).
   Tested via the golden batch per `adr/0002-preserve-jpg-to-webp-baseline.md`.
+- **INV-CB-7 (AR-006)**: per-file byte limit
+  `MAX_BATCH_FILE_BYTES = 100 MiB`. Enforced before decode in
+  batch mode via `fs::metadata(src).len()`, and before decode in
+  single-file mode via `stdin().take(MAX_STDIN_BYTES + 1)`.
+  Payloads exceeding the limit are rejected with a deterministic
+  runtime error (`CodecError::Io`) and exit code 1; the JSON
+  report emits the rejection as `error.kind = "io"` with the
+  size-bound message in `error.message` (no schema version bump).
+- **INV-CB-8 (AR-006)**: per-dimension limit
+  `MAX_DIMENSION = 16384`. Enforced after decode (single-file
+  and batch) via `format::check_dimensions`. Every codec
+  allocation site uses `checked_pixel_capacity(width, height)`
+  so the `width * height` product never silently overflows
+  `usize`. Rejection is `CodecError::Decode` and the JSON report
+  emits it under `error.kind = "decode"`.
 
 ## 5. Error Propagation
 

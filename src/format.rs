@@ -3,6 +3,78 @@ use std::path::Path;
 
 use crate::params::Params;
 
+/// Hard input-byte limits enforced before decode (AR-006 AC-1 / AC-2).
+///
+/// The limits are conservative for a desktop / server CLI converting
+/// typical photo batches. Operators handling genuinely large images
+/// (e.g. raw 16-bit scans > 100 MiB) must explicitly opt into the
+/// larger limit by editing `MAX_STDIN_BYTES` / `MAX_BATCH_FILE_BYTES`
+/// here; there is no runtime override because the limit exists to
+/// keep the binary's memory footprint bounded, not to be tunable
+/// per-request.
+///
+/// `MAX_BATCH_FILE_BYTES` is set to the same value as `MAX_STDIN_BYTES`
+/// on purpose: the batch path can decode many files in parallel under
+/// rayon, so a per-file cap is what keeps the cumulative working set
+/// bounded; per the issue the two are documented as one policy with
+/// a single constant.
+pub const MAX_STDIN_BYTES: u64 = 100 * 1024 * 1024;
+pub const MAX_BATCH_FILE_BYTES: u64 = MAX_STDIN_BYTES;
+
+/// Hard per-dimension limit enforced after decode (AR-006 AC-3).
+///
+/// Decoded images with width or height greater than this are rejected
+/// before any allocation arithmetic that depends on `width * height`.
+/// The chosen value (16384) is well under the practical max for a
+/// 64-bit usize working set at 4 channels per pixel (~1 GiB).
+pub const MAX_DIMENSION: u32 = 16384;
+
+/// Check an input byte count against the per-file limit. Returns an
+/// `Err` string suitable for inclusion in `CodecError::Io(_)` when
+/// the limit is exceeded (AR-006 AC-4: rejection must surface as a
+/// deterministic runtime error, never a panic).
+pub(crate) fn check_input_size(bytes: u64) -> Result<(), String> {
+    if bytes > MAX_BATCH_FILE_BYTES {
+        Err(format!(
+            "input file exceeds the per-file size limit of {MAX_BATCH_FILE_BYTES} bytes \
+             (got {bytes} bytes); see docs/contracts/codec-bounds.md § 4"
+        ))
+    } else {
+        Ok(())
+    }
+}
+
+/// Check a decoded image's pixel dimensions against the per-dimension
+/// limit (AR-006 AC-3 / AC-4).
+pub(crate) fn check_dimensions(width: u32, height: u32) -> Result<(), String> {
+    if width > MAX_DIMENSION || height > MAX_DIMENSION {
+        Err(format!(
+            "decoded image dimensions {width}x{height} exceed the per-dimension limit \
+             of {MAX_DIMENSION}; see docs/contracts/codec-bounds.md § 4"
+        ))
+    } else {
+        Ok(())
+    }
+}
+
+/// Compute `width * height` as a `usize` using checked arithmetic.
+/// Returns `Err` when the product would overflow `usize` or when
+/// either dimension exceeds `MAX_DIMENSION`. Codecs that allocate a
+/// pixel buffer of size `w * h` MUST call this before allocating
+/// (AR-006 AC-3: every codec allocation site uses checked arithmetic).
+pub(crate) fn checked_pixel_capacity(width: u32, height: u32) -> Result<usize, CodecError> {
+    check_dimensions(width, height).map_err(CodecError::Decode)?;
+    width
+        .checked_mul(height)
+        .and_then(|n| usize::try_from(n).ok())
+        .ok_or_else(|| {
+            CodecError::Decode(format!(
+                "pixel count {width}x{height} overflows usize; see \
+                 docs/contracts/codec-bounds.md § 4"
+            ))
+        })
+}
+
 /// Resize policy applied to a decoded image before encoding.
 ///
 /// The v0 baseline is `PortraitLandscape { portrait: 800, landscape: 1000 }`
@@ -327,7 +399,7 @@ impl Codec for WebpToPng {
         _quality: u8,
     ) -> Result<Vec<u8>, CodecError> {
         let rgba = img.to_rgba8();
-        let mut buf = Vec::with_capacity(rgba.width() as usize * rgba.height() as usize);
+        let mut buf = Vec::with_capacity(checked_pixel_capacity(rgba.width(), rgba.height())?);
         {
             let mut writer = std::io::Cursor::new(&mut buf);
             let encoder = image::codecs::png::PngEncoder::new(&mut writer);
@@ -407,7 +479,7 @@ impl Codec for WebpToJpeg {
 
     fn encode_to_vec(&self, img: &image::DynamicImage, quality: u8) -> Result<Vec<u8>, CodecError> {
         let rgb = img.to_rgb8();
-        let mut buf = Vec::with_capacity(rgb.width() as usize * rgb.height() as usize);
+        let mut buf = Vec::with_capacity(checked_pixel_capacity(rgb.width(), rgb.height())?);
         {
             let mut writer = std::io::Cursor::new(&mut buf);
             let encoder = image::codecs::jpeg::JpegEncoder::new_with_quality(&mut writer, quality);
@@ -565,7 +637,7 @@ impl Codec for JpegToPng {
         _quality: u8,
     ) -> Result<Vec<u8>, CodecError> {
         let rgba = img.to_rgba8();
-        let mut buf = Vec::with_capacity(rgba.width() as usize * rgba.height() as usize);
+        let mut buf = Vec::with_capacity(checked_pixel_capacity(rgba.width(), rgba.height())?);
         {
             let mut writer = std::io::Cursor::new(&mut buf);
             let encoder = image::codecs::png::PngEncoder::new(&mut writer);
@@ -645,7 +717,7 @@ impl Codec for PngToJpeg {
 
     fn encode_to_vec(&self, img: &image::DynamicImage, quality: u8) -> Result<Vec<u8>, CodecError> {
         let rgb = img.to_rgb8();
-        let mut buf = Vec::with_capacity(rgb.width() as usize * rgb.height() as usize);
+        let mut buf = Vec::with_capacity(checked_pixel_capacity(rgb.width(), rgb.height())?);
         {
             let mut writer = std::io::Cursor::new(&mut buf);
             let encoder = image::codecs::jpeg::JpegEncoder::new_with_quality(&mut writer, quality);
@@ -777,5 +849,60 @@ mod tests {
         assert_eq!(p.target_width(500, 800), 800); // already smaller -> clamp
         assert_eq!(p.target_width(1200, 800), 1000); // landscape
         assert_eq!(p.target_width(800, 1200), 800); // portrait
+    }
+
+    // AR-006 AC-6: exact-boundary success and one-byte-over failure
+    // for the per-file byte limit. Boundary cases are exercised at
+    // unit level (the helper is the source of truth) and at
+    // integration level (the binary bounds stdin via `take(MAX+1)`
+    // and batch mode via `fs::metadata().len()`).
+    #[test]
+    fn check_input_size_accepts_exact_boundary() {
+        assert!(check_input_size(MAX_BATCH_FILE_BYTES).is_ok());
+    }
+
+    #[test]
+    fn check_input_size_rejects_one_byte_over() {
+        let err = check_input_size(MAX_BATCH_FILE_BYTES + 1).unwrap_err();
+        assert!(
+            err.contains("exceeds the per-file size limit"),
+            "unexpected message: {err}"
+        );
+    }
+
+    // AR-006 AC-6: exact-boundary success and one-pixel-over failure
+    // for the per-dimension limit.
+    #[test]
+    fn check_dimensions_accept_exact_boundary() {
+        assert!(check_dimensions(MAX_DIMENSION, MAX_DIMENSION).is_ok());
+    }
+
+    #[test]
+    fn check_dimensions_rejects_one_pixel_over_width() {
+        let err = check_dimensions(MAX_DIMENSION + 1, MAX_DIMENSION).unwrap_err();
+        assert!(err.contains("exceed the per-dimension limit"), "{err}");
+    }
+
+    #[test]
+    fn check_dimensions_rejects_one_pixel_over_height() {
+        let err = check_dimensions(MAX_DIMENSION, MAX_DIMENSION + 1).unwrap_err();
+        assert!(err.contains("exceed the per-dimension limit"), "{err}");
+    }
+
+    // AR-006 AC-3: checked_pixel_capacity must surface dimension
+    // overflow before allocation. The `width * height` product for
+    // `u32::MAX * u32::MAX` does not overflow `usize` on a 64-bit
+    // host (the product sits just under `usize::MAX`), but the
+    // dimension check still rejects it via `check_dimensions`.
+    #[test]
+    fn checked_pixel_capacity_rejects_oversized_dimensions() {
+        let err = checked_pixel_capacity(MAX_DIMENSION + 1, 1).unwrap_err();
+        assert!(matches!(err, CodecError::Decode(_)), "{err:?}");
+    }
+
+    #[test]
+    fn checked_pixel_capacity_accepts_normal_dimensions() {
+        let cap = checked_pixel_capacity(1920, 1080).unwrap();
+        assert_eq!(cap, 1920 * 1080);
     }
 }

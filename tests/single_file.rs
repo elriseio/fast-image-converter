@@ -233,3 +233,33 @@ fn single_file_metadata_line_shape() {
     // success path omits the error= token
     assert!(!line.contains("error="));
 }
+
+// AR-006 AC-6: oversized stdin must be rejected with exit 1 and a
+// deterministic error report (never a panic). The boundary is
+// enforced by `stdin().take(MAX_STDIN_BYTES + 1)`, so a payload of
+// exactly MAX+1 bytes of non-image data is rejected with the size
+// error rather than the decode error.
+#[test]
+fn single_file_stdin_over_size_limit_rejected_with_exit_one() {
+    // Build a payload of exactly MAX + 1 bytes; the `take` reader
+    // reads up to MAX + 1 bytes, the binary detects the overflow
+    // and emits a `status=err ... error=io error: stdin input exceeds
+    // ...` line.
+    let max = 100u64 * 1024 * 1024;
+    let oversized = vec![0u8; (max + 1) as usize];
+    let (status, stdout, stderr) = run_single_file(&["--single-file"], &oversized);
+    assert_eq!(
+        status.code(),
+        Some(1),
+        "oversized stdin must exit 1; got {status:?}\nstderr: {stderr}"
+    );
+    assert!(stdout.is_empty(), "stdout must be empty on oversize");
+    assert!(
+        stderr.starts_with("status=err "),
+        "expected status=err; got: {stderr}"
+    );
+    assert!(
+        stderr.contains("stdin input exceeds the per-file limit"),
+        "stderr must name the bound: {stderr}"
+    );
+}
