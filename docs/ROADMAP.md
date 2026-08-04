@@ -49,6 +49,22 @@ per-wave tasks):
 **Out of Wave 1 scope**: GIF animation, ICC profiles, AVIF encoder,
 distributed batch mode, library API.
 
+## Rename Wave — fast-image-converter
+
+The next breaking product-identity wave adopts `fast-image-converter` as
+canonical name. Runtime and release changes are sequenced before the
+documentation sweep so examples cannot get ahead of shipped artifacts.
+
+| Task | Owner | Priority | Dependency | Status |
+|---|---|---:|---|---|
+| AR-009 Rename runtime and Cargo identity | developer | P0 | ADR-0003 | queued |
+| AR-010 Rename release and deployment surfaces | developer | P0 | AR-009 | queued |
+| AR-011 Rename product documentation | lamport | P0 | AR-009, AR-010 | queued |
+
+Compatibility aliases `convert-to-webp` and `gallery-compress` remain
+supported for at least one major version. The operational project slug
+is intentionally unchanged and requires a separate identity migration.
+
 ## Planned Waves
 
 ### Wave 2 — Format expansion

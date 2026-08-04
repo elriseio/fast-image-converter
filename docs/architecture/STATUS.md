@@ -15,10 +15,9 @@ tags: [meta, architect, status, convert-to-webp]
 
 # Architect Status (convert-to-webp)
 
-> **Last Updated**: 2026-08-03 — initial draft on multi-format CLI
-> initiation. Authored by architect. See
-> `Issues/open/architect/AR-001_initiate_multi_format_cli.md` for the
-> triggering proposal.
+> **Last Updated**: 2026-08-04 — accepted ADR-0003 to rename the product
+> and canonical CLI to `fast-image-converter`; runtime, release, and
+> documentation rename tasks are queued.
 
 ## 1. Goals
 
@@ -71,7 +70,8 @@ tags: [meta, architect, status, convert-to-webp]
 | Single-file CLI vs library + CLI | CLI only (library API out of scope) | `architecture.md` § 1 Purpose |
 | ImageMagick pipeline vs native libwebp via `image`/`webp` crates | Native (8.5× wall-time win observed in v0 baseline) | `README.md` "Why Rust" |
 | Per-orientation resize policy vs always-uniform policy | Keep v0 per-orientation as the default; allow override | `adr/0002-preserve-jpg-to-webp-baseline.md` |
-| Hard-coded `DEFAULT_GALLERY_BASE` vs env-only vs CLI-only | Env-only with explicit "must-be-set" error for bare args. Resolved by `DE-006` (commit `f9f940e`); no host-specific default remains. | `RUNBOOK.md` § RD-001 |
+| Product identity: `convert-to-webp` vs `fast-image-converter` | Adopt `fast-image-converter` as canonical product and CLI name; retain `convert-to-webp` and `gallery-compress` as compatibility aliases for at least one major version | `adr/0003-fast-image-converter-product-name.md` |
+| Hard-coded `DEFAULT_GALLERY_BASE` vs env-only vs CLI-only | Env-only with explicit "must-be-set" error for bare args. Resolved by `DE-006`; no host-specific default remains. | `RUNBOOK.md` § RD-001 |
 
 ## 4. Architect Cycles
 
@@ -118,10 +118,11 @@ tags: [meta, architect, status, convert-to-webp]
   (e.g. a year) now requires `GALLERY_BASE` to be set; the binary
   no longer carries a host-specific default. Captured as
   `RUNBOOK.md` § RD-001 (Resolved Defect).
-- The crate name `gallery-compress` and the binary name
-  `gallery-compress` are out of sync with the project slug
-  `convert-to-webp` after the multi-format scope expansion. The
-  rename is gated on ADR-0001 acceptance and tracked in AR-001.
+- The product rename to `fast-image-converter` is accepted by ADR-0003.
+  Runtime and release work must land before the documentation sweep;
+  `convert-to-webp` and `gallery-compress` remain compatibility aliases.
+- The operational project slug remains `convert-to-webp` until a separate
+  identity migration is explicitly approved and executed.
 
 ## 8. Source Refs
 
