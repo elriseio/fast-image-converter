@@ -164,7 +164,7 @@ fn main() -> ExitCode {
                      (expected 'none', 'cap=<W>', or 'auto:portrait=<W>,landscape=<H>')"
                 ),
                 CliError::AmbiguousMode => eprintln!(
-                    "{BINARY_NAME}: --single-file does not accept a directory argument"
+                    "{BINARY_NAME}: --single-file does not accept a positional argument"
                 ),
                 CliError::Usage => {}
             }
