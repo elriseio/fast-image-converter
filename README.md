@@ -53,6 +53,15 @@ encoder-only binding to host `libwebp` (see
 [`docs/components/format-codecs.md`](docs/components/format-codecs.md)
 for the codec-layer specification).
 
+## Live Demo
+
+A hosted demo of the converter is available at
+**<https://converter.elrise.io>**. Use it to try the default
+`jpg → webp` pipeline, the WebP decoder (`webp → png` / `webp → jpg`),
+and the resize policies without building the binary locally. The
+demo runs the same `convert-to-webp` CLI behind a web UI and
+shares the documented JSON report shape when `--json` is enabled.
+
 ## Quick Start
 
 ### Prerequisites
