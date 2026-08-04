@@ -1,0 +1,9 @@
+[toolchain]
+# Pinned Rust toolchain for convert-to-webp (AR-005 AC-2). Bumping
+# the version here is a deliberate, single-point change. The CI
+# workflow (`.github/workflows/ci.yml`) reads this file via
+# dtolnay/rust-toolchain and the same file governs local
+# development when `rustup` is installed.
+channel = "1.97.0"
+components = ["rustfmt", "clippy"]
+profile = "minimal"

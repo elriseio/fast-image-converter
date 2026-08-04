@@ -113,11 +113,91 @@ missing one; `cargo test` is green.
 **Provenance**: `Issues/done/developer/DE-006_remove_hard_coded_host_path_reopen.md`,
 proposal `Issues/done/architect/AR-002_remove_hard_coded_host_path.md`.
 
-## 7. Source Refs
+## 7. Continuous Quality Gates
+
+This is the merge-gate contract (AR-005). A clean checkout can run
+the same gate the CI workflow runs, with no operator-only files
+required.
+
+### 7.1 Required Host Tooling
+
+| Tool        | Min version | Source                                |
+|-------------|-------------|---------------------------------------|
+| rustup      | 1.28+       | <https://rustup.rs>                   |
+| Rust        | 1.97.0      | pinned in `rust-toolchain.toml`       |
+| libwebp     | 1.0+        | `libwebp-dev` (Debian/Ubuntu), `libwebp` (Arch), `webp` (Homebrew) |
+| pkg-config  | any         | system package manager                |
+| C compiler  | any         | `build-essential` / `base-devel` / Xcode CLT |
+| cargo-audit | ^0.22       | install once: `make audit-install`    |
+
+The CI workflow installs the same packages under Ubuntu 24.04
+(`sudo apt-get install -y libwebp-dev pkg-config build-essential`).
+
+### 7.2 Local Verification Command
+
+```sh
+scripts/check.sh all
+```
+
+Equivalent shorter form (when only one check is in question):
+
+```sh
+scripts/check.sh format   # cargo fmt --all -- --check
+scripts/check.sh clippy   # cargo clippy --all-targets --all-features -- -D warnings
+scripts/check.sh test     # cargo test --all-targets --all-features
+scripts/check.sh release  # cargo build --release
+scripts/check.sh audit    # cargo audit --deny warnings
+```
+
+The script exits non-zero on the first failed check. Each step is
+also wired through `make check` for convenience on hosts with a
+working `make`. None of the targets read operator-local files
+(`Makefile.agent`, `memory.json`, `.symposium/`, `Issues/`); they
+all derive inputs from the tracked source tree only.
+
+### 7.3 CI Workflow
+
+`.github/workflows/ci.yml` is the canonical merge gate. It runs on
+every pull request and every push to `master` / `main`:
+
+1. Checkout.
+2. Install Rust 1.97.0 via `dtolnay/rust-toolchain` (single source
+   of truth: `rust-toolchain.toml`).
+3. Install `libwebp-dev`, `pkg-config`, `build-essential`.
+4. Cache the Cargo registry and `target/` keyed on
+   `rust-toolchain.toml` + `Cargo.lock`; cache is **not** keyed on
+   PR-supplied content (AR-005 AC-4).
+5. Install `cargo-audit` as a standalone binary (NOT a dev-
+   dependency per AC-3).
+6. Run format, strict Clippy, full tests, release build, advisory
+   scan. Failure on any step fails the job.
+
+The workflow uses `permissions: contents: read` (AC-6: least
+privilege) and does not publish artefacts on `pull_request` events.
+
+### 7.4 Advisory Exceptions
+
+`cargo audit --deny warnings` is the default. When a transient
+advisory cannot be upgraded around, suppress it in
+`audit.toml` at the workspace root:
+
+```toml
+[advisories]
+ignore = [
+  "RUSTSEC-2024-0001",   # ticket id, exact version, rationale
+]
+```
+
+Every ignored advisory must be time-bounded (the ignore is
+re-evaluated at each advisory-db refresh) and accompanied by a
+rationale that names the affected crate, version range, and the
+ticket tracking the upgrade. Empty suppressions are forbidden.
+
+## 8. Source Refs
 
 - `architecture.md` — architecture overview.
 - `architecture/STATUS.md` § 3 Captured Trade-offs.
-- `components/cli-frontend.md` § exit-code contract.
-- `components/converter-core.md` § per-file failure handling.
+- `components/cli-frontend.md` — exit-code contract.
+- `components/converter-core.md` — per-file failure handling.
 - `Issues/open/architect/AR-001_initiate_multi_format_cli.md` —
   the canonical initiation proposal.
