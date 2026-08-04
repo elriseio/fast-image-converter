@@ -4,23 +4,50 @@
 //! portrait 800 / landscape 1000, quality 85) is preserved bit-for-bit
 //! when the binary is invoked without flags. The fixtures under
 //! `tests/fixtures/golden_v0/` are a fixed 10-file mixed-orientation
-//! JPG batch; this test runs the binary on the batch and asserts:
+//! JPG batch; the recorded WebP outputs under
+//! `tests/fixtures/golden_v0/expected/` were captured on the
+//! reference host (libwebp `GOLDEN_LIBWEBP_VERSION`). This test
+//! runs the binary on the batch and asserts:
 //!
 //! 1. exit code is 0 (the default pipeline is the v0 baseline)
 //! 2. the per-file output bytes are deterministic across two runs
 //!    (INV-CB-6 / INV-CC-1/4 contract)
 //! 3. each output WebP starts with the RIFF/WEBP magic header
+//! 4. the per-file output bytes are byte-equivalent to the
+//!    recorded golden within the 0.1 % tolerance documented in
+//!    `README.md` and `adr/0002` (DE-002 AC-3)
 //!
-//! The test does NOT compare against a recorded byte-exact golden
-//! because libwebp version pinning is host-dependent (the
-//! `pkg-config --modversion libwebp` ABI is recorded in
-//! RUNBOOK.md § 2.1). The drift the ADR cares about is the
-//! intra-tree (intra-pipeline) drift; byte-equivalence across two
-//! runs of the same pipeline catches the regression class.
+//! On byte-equivalence failure the test prints the host `libwebp`
+//! version via `pkg-config --modversion libwebp` so future ABI
+//! drift is detectable. If the host `libwebp` drifts, re-record
+//! the golden via:
+//!
+//! ```text
+//! tmp=$(mktemp -d) && cp tests/fixtures/golden_v0/*.jpg "$tmp" && \
+//!   ./target/release/convert-to-webp "$tmp" && \
+//!   cp "$tmp"/*.webp tests/fixtures/golden_v0/expected/
+//! ```
+//!
+//! The drift the ADR cares about is BOTH the intra-tree drift
+//! (determinism across two runs) AND the cross-host drift (output
+//! vs the recorded golden at the recorded libwebp version).
 
 use std::fs;
 use std::path::{Path, PathBuf};
 use std::process::Command;
+
+/// libwebp version on the host that recorded the golden outputs
+/// under `tests/fixtures/golden_v0/expected/`. Update this constant
+/// and re-record the golden if the host libwebp ABI drifts beyond
+/// the 0.1 % tolerance (see README and adr/0002).
+const GOLDEN_LIBWEBP_VERSION: &str = "1.6.0";
+
+/// Per-file byte-equivalence tolerance. ADR-0002 / README "Why Rust"
+/// benchmark uses 0.1 % as the documented fidelity bound between
+/// the Rust pipeline and the bash + ImageMagick original; the
+/// regression test uses the same bound against the recorded golden
+/// to absorb minor libwebp ABI drift across host upgrades.
+const BYTE_TOLERANCE: f64 = 0.001;
 
 fn fixtures() -> PathBuf {
     PathBuf::from(env!("CARGO_MANIFEST_DIR"))
@@ -49,6 +76,11 @@ fn seed_run_dir(src: &Path, dst: &Path) {
     for entry in fs::read_dir(src).unwrap() {
         let entry = entry.unwrap();
         let from = entry.path();
+        if !from.is_file() {
+            // `fs::copy` refuses directories; the `expected/`
+            // subdir added by DE-002 is the live example.
+            continue;
+        }
         let to = dst.join(entry.file_name());
         fs::copy(&from, &to).unwrap();
     }
@@ -235,4 +267,116 @@ fn webp_pixel_dims(bytes: &[u8]) -> (u32, u32) {
     let w = u32::from_le_bytes([bytes[26], bytes[27], 0, 0]) & 0x3FFF;
     let h = u32::from_le_bytes([bytes[28], bytes[29], 0, 0]) & 0x3FFF;
     (w, h)
+}
+
+fn libwebp_version_string() -> String {
+    // `pkg-config --modversion libwebp` is the canonical host ABI
+    // marker (see `RUNBOOK.md` § 2.1). We tolerate the command
+    // being unavailable: an empty string is reported in that case
+    // so the failure message still surfaces the comparison result.
+    match Command::new("pkg-config").arg("--modversion").arg("libwebp").output() {
+        Ok(out) if out.status.success() => {
+            String::from_utf8_lossy(&out.stdout).trim().to_string()
+        }
+        _ => String::new(),
+    }
+}
+
+fn assert_bytes_within_tolerance(actual: &[u8], expected: &[u8], label: &str) {
+    // 0.1 % byte-equivalence per ADR-0002 / README. We measure the
+    // symmetric difference:
+    //   - bytes in the common prefix that differ, plus
+    //   - the trailing length difference when the sizes disagree.
+    // The metric is normalised by `max(actual.len, expected.len)`
+    // so a small file with a big trailing drift is judged the same
+    // way as a big file with a small trailing drift.
+    let common = actual.len().min(expected.len());
+    let mut diff: usize = 0;
+    for i in 0..common {
+        if actual[i] != expected[i] {
+            diff += 1;
+        }
+    }
+    if actual.len() != expected.len() {
+        diff += (actual.len() as isize - expected.len() as isize).unsigned_abs();
+    }
+    let denom = actual.len().max(expected.len()).max(1);
+    let ratio = diff as f64 / denom as f64;
+    assert!(
+        ratio <= BYTE_TOLERANCE,
+        "{label}: byte-equivalence drift {ratio:.6} exceeds tolerance {BYTE_TOLERANCE:.3} \
+         (diff_bytes={diff}, actual_len={}, expected_len={})\n\
+         host libwebp version: {} (recorded golden: {GOLDEN_LIBWEBP_VERSION})",
+        actual.len(),
+        expected.len(),
+        if libwebp_version_string().is_empty() {
+            "<pkg-config libwebp unavailable>".to_string()
+        } else {
+            libwebp_version_string()
+        },
+    );
+}
+
+#[test]
+fn default_pipeline_matches_golden_batch_within_tolerance() {
+    // DE-002 AC-3: per-file byte equivalence within 0.1 % against
+    // the recorded golden under tests/fixtures/golden_v0/expected/.
+    // The recorded golden was captured on the host whose libwebp
+    // version is GOLDEN_LIBWEBP_VERSION. The 0.1 % tolerance
+    // absorbs minor libwebp ABI drift across host upgrades; a
+    // larger drift requires re-recording the golden (see the
+    // module-level docstring for the re-record procedure).
+    let fixtures = fixtures();
+    let expected_dir = fixtures.join("expected");
+    assert!(
+        expected_dir.is_dir(),
+        "expected golden dir missing: {}",
+        expected_dir.display()
+    );
+
+    let run = make_run_dir("golden");
+    seed_run_dir(&fixtures, &run);
+    let output = run_default(&run);
+    let status = output.status;
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    let stderr = String::from_utf8_lossy(&output.stderr);
+
+    assert!(
+        status.success(),
+        "default pipeline must exit 0; got {status:?}\nstdout: {stdout}\nstderr: {stderr}"
+    );
+
+    let mut compared = 0usize;
+    for entry in fs::read_dir(&run).unwrap() {
+        let entry = entry.unwrap();
+        let path = entry.path();
+        if !path
+            .extension()
+            .and_then(|x| x.to_str())
+            .map(|s| s.eq_ignore_ascii_case("webp"))
+            .unwrap_or(false)
+        {
+            continue;
+        }
+        let stem = path.file_stem().unwrap().to_string_lossy().to_string();
+        let golden = expected_dir.join(format!("{stem}.webp"));
+        assert!(
+            golden.is_file(),
+            "no recorded golden for {stem}: expected {}",
+            golden.display()
+        );
+        let actual_bytes = fs::read(&path).unwrap();
+        let expected_bytes = fs::read(&golden).unwrap();
+        assert_bytes_within_tolerance(
+            &actual_bytes,
+            &expected_bytes,
+            &format!("golden comparison for {stem}"),
+        );
+        compared += 1;
+    }
+    let _ = fs::remove_dir_all(&run);
+    assert_eq!(
+        compared, 10,
+        "expected to compare 10 WebP outputs against the golden, compared {compared}"
+    );
 }
