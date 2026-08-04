@@ -56,8 +56,8 @@ compatible alias; see "Binary rename" below.
 # default pipeline (jpg -> webp, no flags)
 ./target/release/convert-to-webp /tmp/my-images
 
-# by year, against the default GALLERY_BASE
-./target/release/convert-to-webp 2025
+# by year, against an explicit GALLERY_BASE (no built-in default)
+GALLERY_BASE=/tmp/my-gallery ./target/release/convert-to-webp 2025
 
 # explicit format pair
 ./target/release/convert-to-webp /tmp/my-images --input-format png --output-format webp
@@ -260,7 +260,7 @@ The report stream defaults to fd 2 (stderr). Override with
 
 | Var | Default | Meaning |
 |---|---|---|
-| `GALLERY_BASE` | `<vfatina-home>/public/images/gallery` | Base directory used when the argument is a bare year (e.g. `2025`). Override for other projects. |
+| `GALLERY_BASE` | _(unset; no built-in default)_ | Optional. When set, used as the parent directory for a bare positional argument (e.g. a year like `2025`). Has no built-in default; pass an absolute path or set `GALLERY_BASE` explicitly. The binary no longer falls back to a host-specific absolute path. |
 
 ## Exit codes
 
