@@ -77,6 +77,14 @@ cat /tmp/01.webp | \
   ./target/release/convert-to-webp --single-file --output-format png \
   > /tmp/01.png
 
+# structured JSON output (DE-005): single-file mode
+cat /tmp/my-images/01.jpg | \
+  ./target/release/convert-to-webp --single-file --output-format webp --json \
+  > /tmp/01.webp 2> /tmp/report.jsonl
+
+# structured JSON output (DE-005): batch mode
+./target/release/convert-to-webp --json /tmp/my-images 2> /tmp/batch.jsonl
+
 # help
 ./target/release/convert-to-webp --help
 ```
@@ -91,6 +99,8 @@ cat /tmp/01.webp | \
 | `--resize <policy>` | `none` \| `cap=<W>` \| `auto:portrait=<W>,landscape=<H>` | `auto:portrait=800,landscape=1000` | resize policy applied before encoding |
 | `--keep-source` | boolean flag | `false` | leave the source file in place after a successful conversion (v0 baseline removes it; **batch mode only**, silently ignored in `--single-file`) |
 | `--single-file`, `-1` | boolean flag | `false` | read one image from stdin, encode it, write the encoded bytes to stdout. The encoded bytes are the only thing on stdout; a single-line key=value record on stderr carries the per-file metadata |
+| `--json` | boolean flag | `false` | emit the per-file metadata as a structured NDJSON record (schema_version 1) instead of the v0 key=value line. See "Structured JSON output (DE-005)" below |
+| `--report-fd <N>` | integer fd | `2` (stderr) | override the report stream. `N=1` is forbidden (would collide with the encoded bytes in single-file mode); non-writable fds rejected with usage + exit 2 |
 | `-h`, `--help` | — | — | print usage to stderr and exit 2 |
 
 ### Single-file mode (DE-004)
@@ -129,6 +139,123 @@ this).
 The default pair `--input-format jpg --output-format webp` is the v0
 `gallery-compress` pipeline preserved bit-for-bit (see ADR-0002).
 
+### Structured JSON output (DE-005)
+
+The `--json` flag switches the per-file metadata line from the v0
+key=value shape to a structured NDJSON record (one JSON object per
+line). The shape is stable, documented in
+`docs/contracts/report-shape.md`, and versioned via the
+`schema_version` field (= 1; bumping is a coordinated breaking
+change).
+
+The flag is orthogonal to the directory / single-file mode: both
+modes can use `--json`.
+
+#### Schema (v1)
+
+```json
+{
+  "schema_version": 1,
+  "mode": "single_file" | "batch",
+  "status": "ok" | "err",
+  "input": {
+    "format": "jpeg" | "png" | "webp",
+    "bytes": 12345,
+    "width": 1920,
+    "height": 1080
+  },
+  "output": {
+    "format": "webp" | "png" | "jpeg",
+    "bytes": 6789,
+    "width": 1920,
+    "height": 1080
+  },
+  "codec": {
+    "quality": 85,
+    "resize_policy": "auto:portrait=800,landscape=1000"
+  },
+  "host": {
+    "libwebp_version": "1.6.0",
+    "build_commit_sha": "<git rev-parse HEAD>"
+  },
+  "duration_ms": 42,
+  "error": null | { "kind": "decode" | "encode" | "io", "message": "..." }
+}
+```
+
+`input` / `output` are `null` when no bytes were consumed or
+produced (pre-decode io failure, decode failure); `width` /
+`height` are `null` when the decode did not produce a
+`DynamicImage`. `host.build_commit_sha` is `null` on builds
+without git context (release tarballs, missing `.git/`).
+
+#### Examples
+
+Single-file mode — success path:
+
+```bash
+cat tests/fixtures/golden_v0/portrait_256x384.jpg | \
+  ./target/release/convert-to-webp --single-file --json \
+  > /tmp/out.webp 2> /tmp/report.jsonl
+# /tmp/report.jsonl contains:
+{"schema_version":1,"mode":"single_file","status":"ok","input":{"format":"jpeg","bytes":43058,"width":256,"height":384},"output":{"format":"webp","bytes":43694,"width":256,"height":384},"codec":{"quality":85,"resize_policy":"auto:portrait=800,landscape=1000"},"host":{"libwebp_version":"1.6.0","build_commit_sha":"<sha>"},"duration_ms":12,"error":null}
+```
+
+Single-file mode — failure path (non-image bytes on stdin):
+
+```bash
+head -c 1024 /dev/urandom | \
+  ./target/release/convert-to-webp --single-file --json \
+  > /dev/null 2> /tmp/fail.jsonl
+# /tmp/fail.jsonl contains:
+{"schema_version":1,"mode":"single_file","status":"err","input":{"format":"jpeg","bytes":1024,"width":null,"height":null},"output":null,"codec":{"quality":85,"resize_policy":"auto:portrait=800,landscape=1000"},"host":{"libwebp_version":"1.6.0","build_commit_sha":"<sha>"},"duration_ms":0,"error":{"kind":"decode","message":"The image format could not be determined"}}
+```
+
+Batch mode — one JSON line per candidate (NDJSON; the lines
+are independent, no enclosing array):
+
+```bash
+./target/release/convert-to-webp --json /tmp/my-images 2> /tmp/batch.jsonl
+wc -l /tmp/batch.jsonl                            # one line per candidate
+jq -c '.status' /tmp/batch.jsonl | sort | uniq -c
+# Note: the v0 trailer '(processed N candidates, K failed)' lands
+# on the same report stream; filter parseable lines with
+# `grep '^{' /tmp/batch.jsonl | jq -c .` if your consumer cannot
+# tolerate the trailer line.
+```
+
+#### `--report-fd <N>` override
+
+The report stream defaults to fd 2 (stderr). Override with
+`--report-fd <N>`:
+
+- `N == 2` (stderr): accepted without further checks; this is
+  the default.
+- `N == 0` (stdin): accepted only if it is open for writing
+  (rare; validated via `fcntl(F_GETFL)`).
+- `N == 1` (stdout): **forbidden** regardless of access mode —
+  in single-file mode stdout carries the encoded bytes and the
+  report stream would collide with the payload. The binary
+  emits a usage message and exits 2.
+- Any other value: the access mode is queried via
+  `fcntl(F_GETFL)`; read-only fds are rejected with usage +
+  exit 2.
+
+```bash
+# Pipe the JSON report to a separate file (no stderr capture).
+./target/release/convert-to-webp --single-file --json --report-fd 3 \
+  3> /tmp/report.jsonl > /tmp/out.webp < input.jpg
+```
+
+#### Compatibility
+
+- Without `--json`, the v0 / DE-004 behaviour is preserved:
+  single-file mode emits a single key=value line on stderr;
+  batch mode emits no per-file metadata on stderr.
+- Stdout is not polluted: in single-file mode, stdout contains
+  only the encoded bytes.
+- Exit-code contract is preserved: `0` / `1` / `2` only.
+
 ## Environment
 
 | Var | Default | Meaning |
@@ -160,6 +287,7 @@ convert-to-webp/
 ├── Cargo.lock
 ├── README.md
 ├── .gitignore
+├── build.rs                         # DE-005 commit 6: bakes build_commit_sha + libwebp_version
 ├── docs/
 │   ├── architecture.md
 │   ├── architecture/STATUS.md
@@ -169,10 +297,16 @@ convert-to-webp/
 │   ├── components/
 │   └── contracts/
 ├── src/
-│   ├── main.rs
-│   └── format.rs
+│   ├── main.rs                      # CLI + report emit + report-fd validation
+│   ├── params.rs                    # Params + parse_resize
+│   ├── format.rs                    # Codec trait + Jpeg/Png/Webp codecs
+│   ├── report.rs                    # DE-005 commit 1: Report struct + JSON encoder
+│   └── bin/
+│       └── gallery-compress.rs      # legacy forwarder
 └── tests/
-    ├── golden_v0.rs
+    ├── golden_v0.rs                 # DE-002: byte-equivalence regression
+    ├── single_file.rs               # DE-004: single-file mode integration
+    ├── json_output.rs               # DE-005: --json / --report-fd integration
     └── fixtures/golden_v0/
 ```
 
@@ -189,3 +323,5 @@ convert-to-webp/
 - `docs/components/converter-core.md` — orchestrator specification.
 - `docs/components/cli-frontend.md` — CLI layer specification.
 - `docs/contracts/codec-bounds.md` — codec ↔ converter-core contract.
+- `docs/contracts/report-shape.md` — `--json` NDJSON wire contract
+  (DE-005; schema_version 1).
