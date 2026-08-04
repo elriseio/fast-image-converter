@@ -93,6 +93,38 @@ fn run_default(dir: &Path) -> std::process::Output {
         .expect("spawn binary")
 }
 
+fn run_with(dir: &Path, args: &[&str]) -> std::process::Output {
+    let mut cmd = Command::new(binary());
+    cmd.arg(dir);
+    for a in args {
+        cmd.arg(a);
+    }
+    cmd.output().expect("spawn binary")
+}
+
+fn webp_files(dir: &Path) -> Vec<(String, Vec<u8>)> {
+    let mut entries: Vec<_> = fs::read_dir(dir)
+        .unwrap()
+        .filter_map(|e| e.ok())
+        .filter(|e| {
+            e.path()
+                .extension()
+                .and_then(|x| x.to_str())
+                .map(|s| s.eq_ignore_ascii_case("webp"))
+                .unwrap_or(false)
+        })
+        .collect();
+    entries.sort_by_key(|e| e.file_name());
+    entries
+        .into_iter()
+        .map(|e| {
+            let name = e.file_name().to_string_lossy().into_owned();
+            let bytes = fs::read(e.path()).unwrap();
+            (name, bytes)
+        })
+        .collect()
+}
+
 fn webp_hashes(dir: &Path) -> Vec<(String, String, u64)> {
     let mut entries: Vec<_> = fs::read_dir(dir)
         .unwrap()
@@ -371,6 +403,116 @@ fn default_pipeline_matches_golden_batch_within_tolerance() {
             &actual_bytes,
             &expected_bytes,
             &format!("golden comparison for {stem}"),
+        );
+        compared += 1;
+    }
+    let _ = fs::remove_dir_all(&run);
+    assert_eq!(
+        compared, 10,
+        "expected to compare 10 WebP outputs against the golden, compared {compared}"
+    );
+}
+
+// ---- DE-003 AC-1 / AC-3 / AC-4 / AC-5: new flag combos ----
+
+#[test]
+fn quality_flag_changes_output_bytes() {
+    // DE-003 AC-1: --quality 50 vs --quality 90 → different output bytes.
+    let fixtures = fixtures();
+    let run50 = make_run_dir("q50");
+    seed_run_dir(&fixtures, &run50);
+    let out50 = run_with(&run50, &["--quality", "50"]);
+    assert!(out50.status.success(), "q50 failed: {:?}", out50);
+    let bytes50 = webp_files(&run50);
+    let _ = fs::remove_dir_all(&run50);
+
+    let run90 = make_run_dir("q90");
+    seed_run_dir(&fixtures, &run90);
+    let out90 = run_with(&run90, &["--quality", "90"]);
+    assert!(out90.status.success(), "q90 failed: {:?}", out90);
+    let bytes90 = webp_files(&run90);
+    let _ = fs::remove_dir_all(&run90);
+
+    assert_eq!(bytes50.len(), 10);
+    assert_eq!(bytes90.len(), 10);
+    let mut any_diff = false;
+    for (a, b) in bytes50.iter().zip(bytes90.iter()) {
+        assert_eq!(a.0, b.0, "filename order must match");
+        if a.1 != b.1 {
+            any_diff = true;
+        }
+    }
+    assert!(
+        any_diff,
+        "DE-003 AC-1: --quality 50 vs --quality 90 must produce different bytes"
+    );
+}
+
+#[test]
+fn resize_none_preserves_native_dimensions() {
+    // DE-003 AC-3: --resize none → output at native dimensions.
+    let fixtures = fixtures();
+    let run = make_run_dir("none");
+    seed_run_dir(&fixtures, &run);
+    let out = run_with(&run, &["--resize", "none"]);
+    assert!(out.status.success(), "none failed: {:?}", out);
+    for (name, _) in webp_files(&run) {
+        let stem = name.trim_end_matches(".webp").to_string();
+        let dim = parse_dim_from_stem(&stem);
+        let bytes = fs::read(run.join(&name)).unwrap();
+        let dims = webp_pixel_dims(&bytes);
+        assert_eq!(
+            dims, dim,
+            "--resize none must round-trip at native dimensions for {name}"
+        );
+    }
+    let _ = fs::remove_dir_all(&run);
+}
+
+#[test]
+fn resize_cap_caps_width() {
+    // DE-003 AC-4: --resize cap=1024 → output width <= 1024 for both
+    // orientations (small fixtures are already < 1024 so this is a
+    // dimension-shape check; the policy logic is unit-tested separately
+    // in format::tests::resize_policy_target_width_is_correct).
+    let fixtures = fixtures();
+    let run = make_run_dir("cap");
+    seed_run_dir(&fixtures, &run);
+    let out = run_with(&run, &["--resize", "cap=1024"]);
+    assert!(out.status.success(), "cap failed: {:?}", out);
+    for (name, _) in webp_files(&run) {
+        let bytes = fs::read(run.join(&name)).unwrap();
+        let dims = webp_pixel_dims(&bytes);
+        assert!(
+            dims.0 <= 1024,
+            "--resize cap=1024: width {} exceeds cap for {name}",
+            dims.0
+        );
+    }
+    let _ = fs::remove_dir_all(&run);
+}
+
+#[test]
+fn resize_auto_default_matches_golden_batch() {
+    // DE-003 AC-5: --resize auto:portrait=800,landscape=1000 must match
+    // the v0 default pipeline byte-for-byte (within the 0.1 % libwebp
+    // tolerance already enforced by DE-002).
+    let fixtures = fixtures();
+    let expected_dir = fixtures.join("expected");
+    let run = make_run_dir("auto");
+    seed_run_dir(&fixtures, &run);
+    let out = run_with(&run, &["--resize", "auto:portrait=800,landscape=1000"]);
+    assert!(out.status.success(), "auto failed: {:?}", out);
+    let mut compared = 0usize;
+    for (name, actual_bytes) in webp_files(&run) {
+        let stem = name.trim_end_matches(".webp");
+        let golden = expected_dir.join(format!("{stem}.webp"));
+        assert!(golden.is_file(), "no recorded golden for {stem}");
+        let expected_bytes = fs::read(&golden).unwrap();
+        assert_bytes_within_tolerance(
+            &actual_bytes,
+            &expected_bytes,
+            &format!("DE-003 AC-5 golden comparison for {stem}"),
         );
         compared += 1;
     }
