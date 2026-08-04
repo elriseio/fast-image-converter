@@ -777,13 +777,17 @@ fn resize_policy_to_string(p: crate::format::ResizePolicy) -> String {
     }
 }
 
-/// Build-time host metadata. `libwebp_version` is hard-coded for
-/// now; commit 6 (build.rs) wires it to the pkg-config-reported
-/// version. `build_commit_sha` is `None` until commit 6 lands.
+/// Build-time host metadata. Both fields are baked into the
+/// binary at compile time by `build.rs`:
+/// - `CONVERT_TO_WEBP_LIBWEBP_VERSION`: pkg-config --modversion;
+///   required (the `webp` crate's build script already depends
+///   on pkg-config finding libwebp).
+/// - `CONVERT_TO_WEBP_BUILD_COMMIT_SHA`: git rev-parse HEAD;
+///   optional (absent on tarball builds or when git is missing).
 fn host_meta() -> crate::report::HostMeta {
     crate::report::HostMeta {
-        libwebp_version: "1.6.0",
-        build_commit_sha: None,
+        libwebp_version: env!("CONVERT_TO_WEBP_LIBWEBP_VERSION"),
+        build_commit_sha: option_env!("CONVERT_TO_WEBP_BUILD_COMMIT_SHA"),
     }
 }
 
