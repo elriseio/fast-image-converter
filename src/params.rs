@@ -64,7 +64,5 @@ pub fn parse_resize(s: &str) -> Result<ResizePolicy, String> {
                 .ok_or_else(|| "auto: missing landscape=<H>".to_string())?,
         });
     }
-    Err(format!(
-        "expected 'none', 'cap=<W>', or 'auto:portrait=<W>,landscape=<H>'; got {s:?}"
-    ))
+    Err(format!("got {s:?}"))
 }

@@ -31,9 +31,7 @@ struct Cli {
     positional: String,
     input_format: Option<Format>,
     output_format: Option<Format>,
-    #[allow(dead_code)] // wired into codec invocation in DE-003 commit 4
     quality: Option<u8>,
-    #[allow(dead_code)] // wired into codec invocation in DE-003 commit 4
     resize: Option<crate::format::ResizePolicy>,
 }
 
@@ -174,6 +172,15 @@ fn main() -> ExitCode {
         }
     };
 
+    // Build params: defaults match the v0 baseline; CLI flags override.
+    let mut params = crate::params::Params::default();
+    if let Some(q) = cli.quality {
+        params.quality = q;
+    }
+    if let Some(r) = cli.resize {
+        params.resize = r;
+    }
+
     let candidates: Vec<PathBuf> = match fs::read_dir(&dir) {
         Ok(rd) => rd
             .filter_map(|e| e.ok())
@@ -204,7 +211,7 @@ fn main() -> ExitCode {
         .map(|src| {
             let dst = src.with_extension(codec.output_extension());
             let report = codec
-                .convert_one(src, &dst)
+                .convert_one_with(src, &dst, &params)
                 .map_err(|e| format!("{}: {}", src.display(), e))?;
             fs::remove_file(src).map_err(|e| e.to_string())?;
             Ok((report.in_bytes, report.out_bytes))

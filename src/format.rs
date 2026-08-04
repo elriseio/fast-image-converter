@@ -1,12 +1,13 @@
 use std::fmt;
 use std::path::Path;
 
+use crate::params::Params;
+
 /// Resize policy applied to a decoded image before encoding.
 ///
 /// The v0 baseline is `PortraitLandscape { portrait: 800, landscape: 1000 }`
 /// (see `docs/adr/0002-preserve-jpg-to-webp-baseline.md`).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-#[allow(dead_code)] // MaxWidth is reserved for Wave 3 (--resize flag per ADR-0001).
 pub enum ResizePolicy {
     None,
     MaxWidth(u32),
@@ -66,7 +67,7 @@ impl std::error::Error for CodecError {}
 ///
 /// One `Codec` instance represents a single (input_format, output_format)
 /// pipeline. The CLI dispatches the chosen codec per file. The codec is
-/// a pure function `(src, dst) -> Result<ConversionReport, CodecError>`;
+/// a pure function `(src, dst, params) -> Result<ConversionReport, CodecError>`;
 /// it holds no per-file state.
 pub trait Codec {
     /// File extensions accepted as input (case-insensitive match).
@@ -74,9 +75,6 @@ pub trait Codec {
 
     /// Output file extension (without the leading dot).
     fn output_extension(&self) -> &'static str;
-
-    /// Resize policy applied before encoding.
-    fn resize_policy(&self) -> ResizePolicy;
 
     /// Decode the source file into a `DynamicImage`.
     fn decode(&self, src: &Path) -> Result<image::DynamicImage, CodecError>;
@@ -91,24 +89,49 @@ pub trait Codec {
         dst: &Path,
     ) -> Result<u64, CodecError>;
 
-    /// Convert one file end-to-end: decode, resize, encode, write.
-    /// The codec MUST NOT remove the source file — that is the
-    /// caller's responsibility (see INV-CB-3 in
+    /// Encode honouring the caller-supplied quality. Default ignores
+    /// `quality` and delegates to `encode` (matches the v0 baseline
+    /// where quality is hard-coded). Codecs whose output format has
+    /// a meaningful quality knob override this.
+    fn encode_with_quality(
+        &self,
+        img: &image::DynamicImage,
+        dst: &Path,
+        _quality: u8,
+    ) -> Result<u64, CodecError> {
+        self.encode(img, dst)
+    }
+
+    /// Convert one file end-to-end with the caller-supplied params
+    /// (resize + quality). The codec MUST NOT remove the source
+    /// file — that is the caller's responsibility (see INV-CB-3 in
     /// `docs/contracts/codec-bounds.md`).
-    fn convert_one(
+    fn convert_one_with(
         &self,
         src: &Path,
         dst: &Path,
+        params: &Params,
     ) -> Result<ConversionReport, CodecError> {
         let img = self.decode(src)?;
-        let resized = apply_resize(&img, self.resize_policy());
-        let out_bytes = self.encode(&resized, dst)?;
+        let resized = apply_resize(&img, params.resize);
+        let out_bytes = self.encode_with_quality(&resized, dst, params.quality)?;
         Ok(ConversionReport {
             in_bytes: std::fs::metadata(src)
                 .map_err(|e| CodecError::Io(e.to_string()))?
                 .len(),
             out_bytes,
         })
+    }
+
+    /// Convert one file with `Params::default()` (the v0 baseline).
+    /// Retained for the round-trip tests under `format::tests`.
+    #[allow(dead_code)] // used only by `format::tests`; the binary calls convert_one_with
+    fn convert_one(
+        &self,
+        src: &Path,
+        dst: &Path,
+    ) -> Result<ConversionReport, CodecError> {
+        self.convert_one_with(src, dst, &Params::default())
     }
 }
 
@@ -152,10 +175,6 @@ impl Codec for JpegToWebp {
         "webp"
     }
 
-    fn resize_policy(&self) -> ResizePolicy {
-        ResizePolicy::default()
-    }
-
     fn decode(&self, src: &Path) -> Result<image::DynamicImage, CodecError> {
         image::ImageReader::open(src)
             .map_err(|e| CodecError::Decode(e.to_string()))?
@@ -174,6 +193,21 @@ impl Codec for JpegToWebp {
         let encoder =
             webp::Encoder::from_rgb(rgb.as_raw(), rgb.width(), rgb.height());
         let memory = encoder.encode(WEBP_QUALITY);
+        let bytes: Vec<u8> = memory.as_ref().to_vec();
+        std::fs::write(dst, &bytes).map_err(|e| CodecError::Io(e.to_string()))?;
+        Ok(bytes.len() as u64)
+    }
+
+    fn encode_with_quality(
+        &self,
+        img: &image::DynamicImage,
+        dst: &Path,
+        quality: u8,
+    ) -> Result<u64, CodecError> {
+        let rgb = img.to_rgb8();
+        let encoder =
+            webp::Encoder::from_rgb(rgb.as_raw(), rgb.width(), rgb.height());
+        let memory = encoder.encode(quality as f32);
         let bytes: Vec<u8> = memory.as_ref().to_vec();
         std::fs::write(dst, &bytes).map_err(|e| CodecError::Io(e.to_string()))?;
         Ok(bytes.len() as u64)
@@ -202,10 +236,6 @@ impl Codec for PngToWebp {
         "webp"
     }
 
-    fn resize_policy(&self) -> ResizePolicy {
-        ResizePolicy::default()
-    }
-
     fn decode(&self, src: &Path) -> Result<image::DynamicImage, CodecError> {
         image::ImageReader::open(src)
             .map_err(|e| CodecError::Decode(e.to_string()))?
@@ -231,6 +261,24 @@ impl Codec for PngToWebp {
         std::fs::write(dst, &bytes).map_err(|e| CodecError::Io(e.to_string()))?;
         Ok(bytes.len() as u64)
     }
+
+    fn encode_with_quality(
+        &self,
+        img: &image::DynamicImage,
+        dst: &Path,
+        quality: u8,
+    ) -> Result<u64, CodecError> {
+        let rgba = img.to_rgba8();
+        let encoder = webp::Encoder::from_rgba(
+            rgba.as_raw(),
+            rgba.width(),
+            rgba.height(),
+        );
+        let memory = encoder.encode(quality as f32);
+        let bytes: Vec<u8> = memory.as_ref().to_vec();
+        std::fs::write(dst, &bytes).map_err(|e| CodecError::Io(e.to_string()))?;
+        Ok(bytes.len() as u64)
+    }
 }
 
 /// WebP input -> PNG output (lossless).
@@ -244,10 +292,6 @@ impl Codec for WebpToPng {
 
     fn output_extension(&self) -> &'static str {
         "png"
-    }
-
-    fn resize_policy(&self) -> ResizePolicy {
-        ResizePolicy::default()
     }
 
     fn decode(&self, src: &Path) -> Result<image::DynamicImage, CodecError> {
@@ -298,10 +342,6 @@ impl Codec for WebpToJpeg {
         "jpg"
     }
 
-    fn resize_policy(&self) -> ResizePolicy {
-        ResizePolicy::default()
-    }
-
     fn decode(&self, src: &Path) -> Result<image::DynamicImage, CodecError> {
         image::ImageReader::open(src)
             .map_err(|e| CodecError::Decode(e.to_string()))?
@@ -323,6 +363,35 @@ impl Codec for WebpToJpeg {
         let encoder = image::codecs::jpeg::JpegEncoder::new_with_quality(
             &mut writer,
             WEBP_QUALITY as u8,
+        );
+        use image::ImageEncoder;
+        encoder
+            .write_image(
+                rgb.as_raw(),
+                rgb.width(),
+                rgb.height(),
+                image::ExtendedColorType::Rgb8,
+            )
+            .map_err(|e| CodecError::Encode(e.to_string()))?;
+        let out_bytes = std::fs::metadata(dst)
+            .map_err(|e| CodecError::Io(e.to_string()))?
+            .len();
+        Ok(out_bytes)
+    }
+
+    fn encode_with_quality(
+        &self,
+        img: &image::DynamicImage,
+        dst: &Path,
+        quality: u8,
+    ) -> Result<u64, CodecError> {
+        let rgb = img.to_rgb8();
+        let file = std::fs::File::create(dst)
+            .map_err(|e| CodecError::Io(e.to_string()))?;
+        let mut writer = std::io::BufWriter::new(file);
+        let encoder = image::codecs::jpeg::JpegEncoder::new_with_quality(
+            &mut writer,
+            quality,
         );
         use image::ImageEncoder;
         encoder
@@ -409,18 +478,19 @@ impl CodecImpl {
         }
     }
 
-    pub fn convert_one(
+    pub fn convert_one_with(
         &self,
         src: &Path,
         dst: &Path,
+        params: &Params,
     ) -> Result<ConversionReport, CodecError> {
         match self {
-            CodecImpl::JpegToWebp(c) => c.convert_one(src, dst),
-            CodecImpl::PngToWebp(c) => c.convert_one(src, dst),
-            CodecImpl::WebpToPng(c) => c.convert_one(src, dst),
-            CodecImpl::WebpToJpeg(c) => c.convert_one(src, dst),
-            CodecImpl::JpegToPng(c) => c.convert_one(src, dst),
-            CodecImpl::PngToJpeg(c) => c.convert_one(src, dst),
+            CodecImpl::JpegToWebp(c) => c.convert_one_with(src, dst, params),
+            CodecImpl::PngToWebp(c) => c.convert_one_with(src, dst, params),
+            CodecImpl::WebpToPng(c) => c.convert_one_with(src, dst, params),
+            CodecImpl::WebpToJpeg(c) => c.convert_one_with(src, dst, params),
+            CodecImpl::JpegToPng(c) => c.convert_one_with(src, dst, params),
+            CodecImpl::PngToJpeg(c) => c.convert_one_with(src, dst, params),
         }
     }
 }
@@ -436,10 +506,6 @@ impl Codec for JpegToPng {
 
     fn output_extension(&self) -> &'static str {
         "png"
-    }
-
-    fn resize_policy(&self) -> ResizePolicy {
-        ResizePolicy::default()
     }
 
     fn decode(&self, src: &Path) -> Result<image::DynamicImage, CodecError> {
@@ -490,10 +556,6 @@ impl Codec for PngToJpeg {
         "jpg"
     }
 
-    fn resize_policy(&self) -> ResizePolicy {
-        ResizePolicy::default()
-    }
-
     fn decode(&self, src: &Path) -> Result<image::DynamicImage, CodecError> {
         image::ImageReader::open(src)
             .map_err(|e| CodecError::Decode(e.to_string()))?
@@ -515,6 +577,35 @@ impl Codec for PngToJpeg {
         let encoder = image::codecs::jpeg::JpegEncoder::new_with_quality(
             &mut writer,
             WEBP_QUALITY as u8,
+        );
+        use image::ImageEncoder;
+        encoder
+            .write_image(
+                rgb.as_raw(),
+                rgb.width(),
+                rgb.height(),
+                image::ExtendedColorType::Rgb8,
+            )
+            .map_err(|e| CodecError::Encode(e.to_string()))?;
+        let out_bytes = std::fs::metadata(dst)
+            .map_err(|e| CodecError::Io(e.to_string()))?
+            .len();
+        Ok(out_bytes)
+    }
+
+    fn encode_with_quality(
+        &self,
+        img: &image::DynamicImage,
+        dst: &Path,
+        quality: u8,
+    ) -> Result<u64, CodecError> {
+        let rgb = img.to_rgb8();
+        let file = std::fs::File::create(dst)
+            .map_err(|e| CodecError::Io(e.to_string()))?;
+        let mut writer = std::io::BufWriter::new(file);
+        let encoder = image::codecs::jpeg::JpegEncoder::new_with_quality(
+            &mut writer,
+            quality,
         );
         use image::ImageEncoder;
         encoder
