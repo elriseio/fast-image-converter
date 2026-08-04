@@ -35,3 +35,10 @@ webp = "0.3"
 # listed explicitly here because the binary uses the symbol
 # directly. DE-005 AC-7.
 libc = "0.2"
+
+[dev-dependencies]
+# `serde_json` powers `tests/json_output.rs` (DE-005 commit 8) —
+# the integration tests parse the binary's NDJSON output to verify
+# the documented `report-shape.md` schema. Dev-only; the release
+# binary is unaffected.
+serde_json = "1.0"
