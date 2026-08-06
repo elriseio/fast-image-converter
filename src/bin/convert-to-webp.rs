@@ -1,5 +1,5 @@
 //! Deprecated compatibility alias for the v0 product name
-//! (`convert-to-webp`). Per ADR-0003 § Decision § 3 the legacy
+//! (`fast-image-converter`). Per ADR-0003 § Decision § 3 the legacy
 //! product name survives for at least one major version as a
 //! thin forwarder that emits a one-line deprecation hint on stderr
 //! and forwards the arguments to the canonical
@@ -46,7 +46,7 @@ fn main() {
     let args: Vec<String> = env::args().skip(1).collect();
 
     eprintln!(
-        "fast-image-converter: 'convert-to-webp' is a deprecated alias; \
+        "fast-image-converter: 'fast-image-converter' is a deprecated alias; \
          forwarding the call to fast-image-converter. \
          Update your scripts to invoke fast-image-converter directly."
     );

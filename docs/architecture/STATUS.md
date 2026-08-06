@@ -1,5 +1,5 @@
 ---
-project_slug: convert-to-webp
+project_slug: fast-image-converter
 doc_slug: architect_status
 doc_type: architecture_meta
 applicable_roles: [architect, developer, fixer, code_researcher]
@@ -9,11 +9,11 @@ source_artifacts:
   - docs/ROADMAP.md
   - docs/RUNBOOK.md
   - src/main.rs (v0 baseline reference)
-summary: "Architect meta-document for convert-to-webp. Captures goals, key properties, captured trade-offs, architect cycles, last-updated."
-tags: [meta, architect, status, convert-to-webp]
+summary: "Architect meta-document for fast-image-converter. Captures goals, key properties, captured trade-offs, architect cycles, last-updated."
+tags: [meta, architect, status, fast-image-converter]
 ---
 
-# Architect Status (convert-to-webp)
+# Architect Status (fast-image-converter)
 
 > **Last Updated**: 2026-08-04 — accepted ADR-0003 to rename the product
 > and canonical CLI to `fast-image-converter`; runtime, release, and
@@ -70,7 +70,7 @@ tags: [meta, architect, status, convert-to-webp]
 | Single-file CLI vs library + CLI | CLI only (library API out of scope) | `architecture.md` § 1 Purpose |
 | ImageMagick pipeline vs native libwebp via `image`/`webp` crates | Native (8.5× wall-time win observed in v0 baseline) | `README.md` "Why Rust" |
 | Per-orientation resize policy vs always-uniform policy | Keep v0 per-orientation as the default; allow override | `adr/0002-preserve-jpg-to-webp-baseline.md` |
-| Product identity: `convert-to-webp` vs `fast-image-converter` | Adopt `fast-image-converter` as canonical product and CLI name; retain `convert-to-webp` and `gallery-compress` as compatibility aliases for at least one major version | `adr/0003-fast-image-converter-product-name.md` |
+| Product identity: `fast-image-converter` vs `fast-image-converter` | Adopt `fast-image-converter` as canonical product and CLI name; retain `fast-image-converter` and `gallery-compress` as compatibility aliases for at least one major version | `adr/0003-fast-image-converter-product-name.md` |
 | Hard-coded `DEFAULT_GALLERY_BASE` vs env-only vs CLI-only | Env-only with explicit "must-be-set" error for bare args. Resolved by `DE-006`; no host-specific default remains. | `RUNBOOK.md` § RD-001 |
 
 ## 4. Architect Cycles
@@ -110,7 +110,7 @@ tags: [meta, architect, status, convert-to-webp]
 ## 7. Project-Specific Notes
 
 - The v0 binary is named `gallery-compress`. Under ADR-0001 the
-  canonical binary name will move to `convert-to-webp` (matching
+  canonical binary name will move to `fast-image-converter` (matching
   the project slug); the v0 name is kept as a backward-compatible
   alias until the next major version (see AR-001 § 6 Migration).
 - The `DEFAULT_GALLERY_BASE` constant in `src/main.rs` was removed
@@ -120,8 +120,8 @@ tags: [meta, architect, status, convert-to-webp]
   `RUNBOOK.md` § RD-001 (Resolved Defect).
 - The product rename to `fast-image-converter` is accepted by ADR-0003.
   Runtime and release work must land before the documentation sweep;
-  `convert-to-webp` and `gallery-compress` remain compatibility aliases.
-- The operational project slug remains `convert-to-webp` until a separate
+  `fast-image-converter` and `gallery-compress` remain compatibility aliases.
+- The operational project slug remains `fast-image-converter` until a separate
   identity migration is explicitly approved and executed.
 
 ## 8. Source Refs

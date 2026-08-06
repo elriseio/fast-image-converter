@@ -1,10 +1,10 @@
 ---
-project_slug: convert-to-webp
+project_slug: fast-image-converter
 doc_slug: integration_contract
 doc_type: integration_contract
 applicable_roles: [architect, developer, external_consumer]
 version: 1
-summary: "Outward-facing integration contract for the convert-to-webp CLI. Documents the single-file stdin/stdout mode, the structured JSON report, the exit-code contract, and the per-flag surface that any external consumer (shell script, CI pipeline, server-side wrapper) can rely on. This contract is the library-side complement to per-consumer integration projects (which live outside this repository)."
+summary: "Outward-facing integration contract for the fast-image-converter CLI. Documents the single-file stdin/stdout mode, the structured JSON report, the exit-code contract, and the per-flag surface that any external consumer (shell script, CI pipeline, server-side wrapper) can rely on. This contract is the library-side complement to per-consumer integration projects (which live outside this repository)."
 source_artifacts:
   - docs/components/cli-frontend.md
   - docs/components/converter-core.md
@@ -17,7 +17,7 @@ tags: [integration, contract, external-consumer, stdin, stdout, json]
 
 # Integration Contract (outward-facing)
 
-> **Audience**: external consumers of the `convert-to-webp` binary —
+> **Audience**: external consumers of the `fast-image-converter` binary —
 > shell scripts, CI pipelines, server-side wrappers, build tools,
 > containerised batch jobs. Not intended for in-process (library)
 > callers; for that, a separate ADR is needed to expose a Rust

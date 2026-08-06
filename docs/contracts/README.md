@@ -1,7 +1,7 @@
 # Contracts
 
 > **Canonical registry** of cross-component contracts in the
-> `convert-to-webp` architecture. Each contract lives in its own
+> `fast-image-converter` architecture. Each contract lives in its own
 > per-contract document with shape, invariants, and enforcement.
 
 ## Registry

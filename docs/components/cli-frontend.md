@@ -1,5 +1,5 @@
 ---
-project_slug: convert-to-webp
+project_slug: fast-image-converter
 doc_slug: component_cli_frontend
 doc_type: component_doc
 applicable_roles: [architect, developer, tester]
@@ -60,7 +60,7 @@ Wave 5 (DE-005) additions:
 
 | Channel | Content |
 |---|---|
-| stdout | batch mode: single-line summary `convert-to-webp: <N> files in <DIR>: <IN_BYTES> -> <OUT_BYTES>` (preserved verbatim from v0); single-file mode: the encoded image bytes (raw; no header / framing) |
+| stdout | batch mode: single-line summary `fast-image-converter: <N> files in <DIR>: <IN_BYTES> -> <OUT_BYTES>` (preserved verbatim from v0); single-file mode: the encoded image bytes (raw; no header / framing) |
 | stderr | per-file error lines `<file>: <error>` (preserved verbatim from v0) + the v0 stderr trailer `(processed N candidates, K failed)` (preserved in batch mode); single-file mode metadata line in v0/DE-004 shape; with `--json`, the per-file NDJSON record on the configured report stream (default fd 2) per `docs/contracts/report-shape.md` |
 | exit code | `0` \| `1` \| `2` (see § 4) |
 

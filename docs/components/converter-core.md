@@ -1,5 +1,5 @@
 ---
-project_slug: convert-to-webp
+project_slug: fast-image-converter
 doc_slug: component_converter_core
 doc_type: component_doc
 applicable_roles: [architect, developer, tester]

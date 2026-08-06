@@ -1,7 +1,7 @@
 # golden_v0/expected — recorded WebP golden outputs
 
 These 10 `.webp` files are the recorded outputs of the
-`convert-to-webp` binary (default pipeline, no flags) when run
+`fast-image-converter` binary (default pipeline, no flags) when run
 against the matching `.jpg` files in the parent `golden_v0/`
 directory. They are the regression ground truth per ADR-0002
 and DE-002.
@@ -10,7 +10,7 @@ and DE-002.
 
 | Field | Value |
 |---|---|
-| Binary | `convert-to-webp` v0.2.0 (post-DE-001) |
+| Binary | `fast-image-converter` v0.2.0 (post-DE-001) |
 | Host | the host that committed this golden (see `git log --follow -- tests/fixtures/golden_v0/expected/`) |
 | libwebp | 1.6.0 (`pkg-config --modversion libwebp`) |
 | Quality | 85 (v0 baseline) |
@@ -26,7 +26,7 @@ drift above the 0.1 % tolerance (see `tests/golden_v0.rs`
 ```bash
 tmp=$(mktemp -d)
 cp tests/fixtures/golden_v0/*.jpg "$tmp/"
-./target/release/convert-to-webp "$tmp"
+./target/release/fast-image-converter "$tmp"
 cp "$tmp"/*.webp tests/fixtures/golden_v0/expected/
 rm -rf "$tmp"
 ```

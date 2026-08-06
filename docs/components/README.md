@@ -1,6 +1,6 @@
 # Components
 
-> **Canonical registry** of components in the `convert-to-webp`
+> **Canonical registry** of components in the `fast-image-converter`
 > architecture. Each component has its own per-component document
 > with purpose, inputs / outputs, invariants, failure modes, and
 > related contracts.

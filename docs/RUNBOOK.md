@@ -231,7 +231,7 @@ panic = "abort"
 Trade-offs documented here (AR-008 AC-1):
 
 - `strip = "symbols"` removes the symbol table from the ELF. The
-  measured size of `convert-to-webp` is ~1.9 MiB stripped (the v0
+  measured size of `fast-image-converter` is ~1.9 MiB stripped (the v0
   README claimed ~1.6 MiB; the difference is the wider feature
   set: JPEG + PNG + WebP decoders, `rayon`, `libc`, plus `serde_json`
   in tests). The legacy `gallery-compress` forwarder is ~0.37 MiB.
@@ -251,16 +251,16 @@ Trade-offs documented here (AR-008 AC-1):
 VERSION="v0.2.0"
 TARGET="x86_64-unknown-linux-gnu"
 
-curl -fsSL "https://github.com/<owner>/convert-to-webp/releases/download/${VERSION}/convert-to-webp-${TARGET}.tar.gz" \
-  | tar -xz -C /usr/local/bin convert-to-webp gallery-compress
+curl -fsSL "https://github.com/<owner>/fast-image-converter/releases/download/${VERSION}/fast-image-converter-${TARGET}.tar.gz" \
+  | tar -xz -C /usr/local/bin fast-image-converter gallery-compress
 
-chmod +x /usr/local/bin/convert-to-webp /usr/local/bin/gallery-compress
+chmod +x /usr/local/bin/fast-image-converter /usr/local/bin/gallery-compress
 ```
 
 The release tarball layout matches `target/release-dir/`:
 
 ```
-convert-to-webp        # canonical binary
+fast-image-converter        # canonical binary
 gallery-compress       # legacy forwarder (ADR-0001 § Decision § 5)
 SHA256SUMS             # sha256 checksums
 build-manifest.txt     # version, commit, target, rust + libwebp versions
@@ -272,7 +272,7 @@ LICENSE                # MIT
 ```sh
 cd /usr/local/bin
 sha256sum -c <<'EOF'
-$(curl -fsSL https://github.com/<owner>/convert-to-webp/releases/download/${VERSION}/SHA256SUMS)
+$(curl -fsSL https://github.com/<owner>/fast-image-converter/releases/download/${VERSION}/SHA256SUMS)
 EOF
 ```
 
@@ -286,8 +286,8 @@ recorded values against a clean checkout at the same commit.
 
 ```sh
 PREVIOUS="v0.1.0"
-curl -fsSL "https://github.com/<owner>/convert-to-webp/releases/download/${PREVIOUS}/convert-to-webp-${TARGET}.tar.gz" \
-  | tar -xz -C /usr/local/bin convert-to-webp gallery-compress
+curl -fsSL "https://github.com/<owner>/fast-image-converter/releases/download/${PREVIOUS}/fast-image-converter-${TARGET}.tar.gz" \
+  | tar -xz -C /usr/local/bin fast-image-converter gallery-compress
 sha256sum -c <(curl -fsSL ".../${PREVIOUS}/SHA256SUMS")
 ```
 

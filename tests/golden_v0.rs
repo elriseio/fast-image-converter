@@ -33,7 +33,7 @@
 //! vs the recorded golden at the recorded libwebp version).
 //!
 //! The canonical target is `fast-image-converter`; the legacy
-//! names (`convert-to-webp`, `gallery-compress`) survive as
+//! names (`fast-image-converter`, `gallery-compress`) survive as
 //! forwarders. The integration tests assert behaviour through the
 //! canonical target; alias coverage lives in
 //! `tests/alias_forwarding.rs`.

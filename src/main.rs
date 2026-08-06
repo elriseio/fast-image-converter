@@ -16,7 +16,7 @@ use format::{
 use params::{parse_resize, parse_resize_fit};
 
 // Runtime error prefixes and the usage banner use the canonical
-// product name. Compatibility aliases (`convert-to-webp`,
+// product name. Compatibility aliases (`fast-image-converter`,
 // `gallery-compress`) live in `src/bin/*.rs` and forward into this
 // binary; the aliases themselves emit their own one-line
 // deprecation hint on stderr before spawning the canonical binary.
@@ -1313,7 +1313,7 @@ fn emit_batch_record_io_failure(
 fn print_usage() {
     // The canonical usage banner names `fast-image-converter`. The
     // legacy names appear only in the aliases list (so operators
-    // discovering the binary via `convert-to-webp --help` or
+    // discovering the binary via `fast-image-converter --help` or
     // `gallery-compress --help` still learn about their deprecation;
     // the aliases invoke the canonical binary after printing their
     // own deprecation hint).
@@ -1349,7 +1349,7 @@ fn print_usage() {
          \x20 -h, --help             show this help\n\
          \n\
          Compatibility aliases (deprecated; forward to this binary):\n\
-         \x20 convert-to-webp         forwards to fast-image-converter; emits a one-line deprecation hint on stderr\n\
+         \x20 fast-image-converter         forwards to fast-image-converter; emits a one-line deprecation hint on stderr\n\
          \x20 gallery-compress        forwards to fast-image-converter; emits a one-line deprecation hint on stderr\n\
          \n\
          Examples:\n\
@@ -1489,7 +1489,7 @@ mod cli_tests {
         // be identical across the canonical name and both legacy
         // names.
         let canonical = parse_cli(&v(&["fast-image-converter", "/tmp/x"])).unwrap();
-        let ctw = parse_cli(&v(&["convert-to-webp", "/tmp/x"])).unwrap();
+        let ctw = parse_cli(&v(&["fast-image-converter", "/tmp/x"])).unwrap();
         let gc = parse_cli(&v(&["gallery-compress", "/tmp/x"])).unwrap();
         assert_eq!(canonical.mode, ctw.mode);
         assert_eq!(canonical.mode, gc.mode);

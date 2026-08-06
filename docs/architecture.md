@@ -6,7 +6,7 @@
 
 ## 1. Purpose
 
-`convert-to-webp` is a command-line utility for **batch image-format
+`fast-image-converter` is a command-line utility for **batch image-format
 conversion** between raster image formats. The v0 baseline
 (`gallery-compress` binary, v0.2.0) covers the single pipeline
 **JPG → WebP** with a fixed orientation-based resize policy. The
@@ -45,7 +45,7 @@ The utility explicitly does **not** target:
              | (stdin / stdout / stderr / exit codes)
              v
 +-------------------------+
-|  convert-to-webp        |
+|  fast-image-converter        |
 |  (Rust CLI binary)      |
 +------------+------------+
              | filesystem read / write
@@ -67,7 +67,7 @@ exposed via the `image` crate.
 
 ```
 +----------------------------------------+
-|  convert-to-webp binary                |
+|  fast-image-converter binary                |
 |  +----------------------------------+  |
 |  | cli-frontend                     |  |   parses argv, env, print usage
 |  |  - arg parser                    |  |

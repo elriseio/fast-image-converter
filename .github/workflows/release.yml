@@ -117,13 +117,13 @@ jobs:
           set -euo pipefail
           # The canonical `fast-image-converter` is the primary
           # release artefact. The two compatibility aliases
-          # (`convert-to-webp`, `gallery-compress`) ship alongside
+          # (`fast-image-converter`, `gallery-compress`) ship alongside
           # it as documented compatibility assets.
           canonical_size=$(stat -c '%s' target/release/fast-image-converter)
-          deprecated_size=$(stat -c '%s' target/release/convert-to-webp)
+          deprecated_size=$(stat -c '%s' target/release/fast-image-converter)
           legacy_size=$(stat -c '%s' target/release/gallery-compress)
           echo "fast-image-converter=${canonical_size}"
-          echo "convert-to-webp=${deprecated_size}"
+          echo "fast-image-converter=${deprecated_size}"
           echo "gallery-compress=${legacy_size}"
           echo "canonical_size=${canonical_size}" >> "$GITHUB_OUTPUT"
           echo "deprecated_size=${deprecated_size}" >> "$GITHUB_OUTPUT"
@@ -137,7 +137,7 @@ jobs:
           # aliases follow in alphabetical order so the manifest +
           # checksums read top-to-bottom in the same order.
           cd target/release
-          sha256sum fast-image-converter convert-to-webp gallery-compress > SHA256SUMS
+          sha256sum fast-image-converter fast-image-converter gallery-compress > SHA256SUMS
           cat SHA256SUMS
 
       - name: Build manifest
@@ -155,7 +155,7 @@ jobs:
             echo "target=${target_triple}"
             echo "rust_version=${rust_version}"
             echo "libwebp_version=${libwebp_version}"
-            echo "binaries=fast-image-converter,convert-to-webp,gallery-compress"
+            echo "binaries=fast-image-converter,fast-image-converter,gallery-compress"
             echo "canonical_size_bytes=${{ steps.sizes.outputs.canonical_size }}"
             echo "deprecated_size_bytes=${{ steps.sizes.outputs.deprecated_size }}"
             echo "legacy_size_bytes=${{ steps.sizes.outputs.legacy_size }}"
@@ -184,7 +184,7 @@ jobs:
           # Compatibility aliases must forward to the canonical
           # binary and exit 0; they emit their own one-line
           # deprecation hint on stderr (AC-3 / AC-4 / AC-7).
-          ./target/release/convert-to-webp "$tmp" >/dev/null 2> /tmp/ctw.err
+          ./target/release/fast-image-converter "$tmp" >/dev/null 2> /tmp/ctw.err
           ctw_rc=$?
           grep -q 'deprecated alias' /tmp/ctw.err
           test "$ctw_rc" -eq 0
@@ -204,7 +204,7 @@ jobs:
           # operators can install any of the three via the
           # documented install path.
           cp target/release/fast-image-converter target/release-dir/fast-image-converter
-          cp target/release/convert-to-webp target/release-dir/convert-to-webp
+          cp target/release/fast-image-converter target/release-dir/fast-image-converter
           cp target/release/gallery-compress target/release-dir/gallery-compress
           cp target/release/SHA256SUMS target/release-dir/SHA256SUMS
           cp target/release/build-manifest.txt target/release-dir/build-manifest.txt
@@ -217,7 +217,7 @@ jobs:
           generate_release_notes: true
           files: |
             target/release-dir/fast-image-converter
-            target/release-dir/convert-to-webp
+            target/release-dir/fast-image-converter
             target/release-dir/gallery-compress
             target/release-dir/SHA256SUMS
             target/release-dir/build-manifest.txt

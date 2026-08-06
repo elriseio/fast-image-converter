@@ -1,5 +1,5 @@
 ---
-project_slug: convert-to-webp
+project_slug: fast-image-converter
 doc_slug: contract_codec_bounds
 doc_type: contract_doc
 applicable_roles: [architect, developer, tester]

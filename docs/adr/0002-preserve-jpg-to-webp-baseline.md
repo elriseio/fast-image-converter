@@ -1,5 +1,5 @@
 ---
-project_slug: convert-to-webp
+project_slug: fast-image-converter
 doc_type: adr
 applicable_roles: [architect, developer]
 version: 1
@@ -31,7 +31,7 @@ ADR-0001 acceptance.
 
 ## Context
 
-ADR-0001 extends `convert-to-webp` to a multi-format converter. The
+ADR-0001 extends `fast-image-converter` to a multi-format converter. The
 v0 binary has been the operator's primary tool for a real gallery
 pipeline, and its default behaviour — JPG → WebP, portrait
 max-width 800, landscape max-width 1000, quality 85 — is currently
@@ -58,7 +58,7 @@ preserved bit-for-bit when the operator runs the binary without
 flags. Specifically:
 
 1. **Default flags are equivalent to the v0 pipeline**:
-   `convert-to-webp <dir>` ≡ `gallery-compress <dir>`.
+   `fast-image-converter <dir>` ≡ `gallery-compress <dir>`.
 2. **A regression test is added**: a fixed golden batch (10 mixed-
    orientation JPGs, ~300 KB total) is committed under
    `tests/fixtures/golden_v0/`. The test asserts that the default-
@@ -70,7 +70,7 @@ flags. Specifically:
    - `LANDSCAPE_MAX_W = 1000`
    - Default resize filter = `FilterType::Lanczos3`
 4. **The `gallery-compress` binary alias** forwards to
-   `convert-to-webp` with the same argv; on first run after the
+   `fast-image-converter` with the same argv; on first run after the
    rename it prints a one-time stderr hint recommending the new
    name.
 

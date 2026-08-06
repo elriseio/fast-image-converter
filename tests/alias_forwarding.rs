@@ -1,6 +1,6 @@
 //! Compatibility alias coverage.
 //!
-//! The legacy names `convert-to-webp` and `gallery-compress`
+//! The legacy names `fast-image-converter` and `gallery-compress`
 //! survive as thin forwarders. They must:
 //!
 //! 1. Forward arguments unchanged to the canonical
@@ -32,7 +32,7 @@ fn canonical() -> &'static str {
 }
 
 fn convert_to_webp_alias() -> &'static str {
-    env!("CARGO_BIN_EXE_convert-to-webp")
+    env!("CARGO_BIN_EXE_fast-image-converter")
 }
 
 fn gallery_compress_alias() -> &'static str {
@@ -222,7 +222,7 @@ fn alias_forwards_failure_exit_status() {
     assert_eq!(
         canonical_out.status.code(),
         ctw_out.status.code(),
-        "convert-to-webp alias exit code must match canonical"
+        "fast-image-converter alias exit code must match canonical"
     );
     assert_eq!(
         canonical_out.status.code(),

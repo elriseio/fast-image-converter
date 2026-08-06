@@ -1,4 +1,4 @@
-# convert-to-webp
+# fast-image-converter
 
 A single Rust binary that batch-converts a directory of images between
 `jpg`, `png`, and `webp`, and that also runs as a single-file
@@ -59,7 +59,7 @@ A hosted demo of the converter is available at
 **<https://converter.elrise.io>**. Use it to try the default
 `jpg → webp` pipeline, the WebP decoder (`webp → png` / `webp → jpg`),
 and the resize policies without building the binary locally. The
-demo runs the same `convert-to-webp` CLI behind a web UI and
+demo runs the same `fast-image-converter` CLI behind a web UI and
 shares the documented JSON report shape when `--json` is enabled.
 
 ## Quick Start
@@ -85,7 +85,7 @@ pkg-config --modversion libwebp   # expected: 1.6.0 or newer
 cargo build --release
 ```
 
-The canonical binary is `target/release/convert-to-webp`. A
+The canonical binary is `target/release/fast-image-converter`. A
 backward-compatible forwarder named `target/release/gallery-compress`
 is also produced (see [Binary Rename](#binary-rename)).
 
@@ -95,20 +95,20 @@ Convert a directory of `.jpg` images in place (source files removed
 on success, WebP output alongside them):
 
 ```bash
-./target/release/convert-to-webp /path/to/your/images
+./target/release/fast-image-converter /path/to/your/images
 ```
 
 Run a single conversion through the stdin/stdout pipeline (encoded
 bytes on stdout, one-line report on stderr):
 
 ```bash
-cat input.jpg | ./target/release/convert-to-webp --single-file --output-format webp > output.webp
+cat input.jpg | ./target/release/fast-image-converter --single-file --output-format webp > output.webp
 ```
 
 Run the same conversion with structured NDJSON output:
 
 ```bash
-cat input.jpg | ./target/release/convert-to-webp --single-file --output-format webp --json \
+cat input.jpg | ./target/release/fast-image-converter --single-file --output-format webp --json \
     > output.webp 2> report.jsonl
 ```
 
@@ -118,7 +118,7 @@ cat input.jpg | ./target/release/convert-to-webp --single-file --output-format w
 curated operator-facing view.
 
 ```bash
-./target/release/convert-to-webp --help
+./target/release/fast-image-converter --help
 ```
 
 | Flag | Type | Default | Meaning |
@@ -249,11 +249,11 @@ consumer cannot tolerate the trailer line.
 
 ## Binary Rename
 
-The canonical binary is `convert-to-webp` (matching the project
+The canonical binary is `fast-image-converter` (matching the project
 slug). The legacy v0 name `gallery-compress` is retained as a thin
 forwarder ([`src/bin/gallery-compress.rs`](src/bin/gallery-compress.rs))
 that prints a deprecation hint on stderr and forwards argv to
-`convert-to-webp`. The forwarder preserves the inner binary's exit
+`fast-image-converter`. The forwarder preserves the inner binary's exit
 code. The legacy name is kept for at least the next major version.
 
 ## Performance
@@ -270,7 +270,7 @@ Output bytes match within 0.1 % of the `libwebp` reference encoder
 > above are host-specific. Re-measure on your host with:
 >
 > ```bash
-> time ./target/release/convert-to-webp /path/to/your/jpg-batch
+> time ./target/release/fast-image-converter /path/to/your/jpg-batch
 > ```
 >
 > The 0.1 % fidelity tolerance is enforced against
@@ -281,7 +281,7 @@ Output bytes match within 0.1 % of the `libwebp` reference encoder
 The release binary size is ~2.4 MiB (stripped) on the reference
 host. **Reproducibility note (environment-dependent)**: rebuild
 locally with `cargo build --release` and inspect
-`ls -lh target/release/convert-to-webp`. Size varies with the
+`ls -lh target/release/fast-image-converter`. Size varies with the
 target triple, the `image` crate's decoder table, and the host
 linker.
 
@@ -343,7 +343,7 @@ src/
   format.rs                  # Codec trait, ResizePolicy, per-codec impls, Format enum (jpg/jpeg/png/webp)
   params.rs                  # Params { quality, resize } — defaults to v0 baseline
   report.rs                  # Report struct, hand-rolled NDJSON encoder (schema_version 1)
-  bin/gallery-compress.rs    # legacy forwarder to convert-to-webp
+  bin/gallery-compress.rs    # legacy forwarder to fast-image-converter
 tests/
   golden_v0.rs               # golden-batch regression (10 fixtures; libwebp 1.6.0 golden)
   single_file.rs             # --single-file mode integration (success, failure, byte-equivalence)
@@ -407,7 +407,7 @@ must be re-recorded:
 ```bash
 tmp=$(mktemp -d)
 cp tests/fixtures/golden_v0/*.jpg "$tmp/"
-./target/release/convert-to-webp "$tmp"
+./target/release/fast-image-converter "$tmp"
 cp "$tmp"/*.webp tests/fixtures/golden_v0/expected/
 rm -rf "$tmp"
 ```

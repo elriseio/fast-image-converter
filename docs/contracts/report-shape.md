@@ -1,5 +1,5 @@
 ---
-project_slug: convert-to-webp
+project_slug: fast-image-converter
 doc_slug: contract_report_shape
 doc_type: contract_doc
 applicable_roles: [architect, developer, tester]
@@ -170,7 +170,7 @@ Per-field semantics:
   preserved as v0 behaviour; suppressing or relocating it
   requires a separate change.
 - The `gallery-compress` binary is a thin forwarder to
-  `convert-to-webp` (see `src/bin/gallery-compress.rs`); the
+  `fast-image-converter` (see `src/bin/gallery-compress.rs`); the
   JSON contract is owned by the canonical binary and is not
   re-emitted by the forwarder.
 

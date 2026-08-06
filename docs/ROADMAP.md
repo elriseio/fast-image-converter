@@ -61,7 +61,7 @@ documentation sweep so examples cannot get ahead of shipped artifacts.
 | AR-010 Rename release and deployment surfaces | developer | P0 | AR-009 | queued |
 | AR-011 Rename product documentation | lamport | P0 | AR-009, AR-010 | queued |
 
-Compatibility aliases `convert-to-webp` and `gallery-compress` remain
+Compatibility aliases `fast-image-converter` and `gallery-compress` remain
 supported for at least one major version. The operational project slug
 is intentionally unchanged and requires a separate identity migration.
 

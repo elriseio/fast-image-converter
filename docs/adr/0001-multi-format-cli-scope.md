@@ -1,5 +1,5 @@
 ---
-project_slug: convert-to-webp
+project_slug: fast-image-converter
 doc_slug: adr_0001_multi_format_cli_scope
 doc_type: adr
 applicable_roles: [architect, developer]
@@ -7,7 +7,7 @@ version: 1
 date: 2026-08-03
 status: proposed
 supersedes: null
-summary: "Extend convert-to-webp from a single JPG→WebP converter to a generic configurable input/output image-format converter, with the v0 pipeline as the default."
+summary: "Extend fast-image-converter from a single JPG→WebP converter to a generic configurable input/output image-format converter, with the v0 pipeline as the default."
 source_artifacts:
   - README.md (v0 baseline behaviour)
   - src/main.rs:11-15 (v0 constants)
@@ -32,7 +32,7 @@ tags: [adr, scope, multi-format, converter]
 
 ## Context
 
-The `convert-to-webp` project currently hosts a single Rust binary
+The `fast-image-converter` project currently hosts a single Rust binary
 named `gallery-compress` (v0.2.0) that walks a directory of `.jpg`
 files and converts each to `.webp` using `libwebp` via the `webp`
 crate, with a hard-coded orientation-based resize policy:
@@ -61,7 +61,7 @@ directive.
 
 ## Decision
 
-We will extend `convert-to-webp` to a **generic configurable
+We will extend `fast-image-converter` to a **generic configurable
 input/output image-format converter**, with the following scope:
 
 1. **Default pipeline preserved**: no flags → the v0 JPG → WebP
@@ -74,7 +74,7 @@ input/output image-format converter**, with the following scope:
    for the default pipeline; overridable via `--resize ...` from
    Wave 3.
 5. **Binary name**: under Wave 1 the binary is renamed to
-   `convert-to-webp` (matching the project slug); the v0 name
+   `fast-image-converter` (matching the project slug); the v0 name
    `gallery-compress` is retained as a backward-compatible alias
    that prints a one-time deprecation hint and then forwards to
    the new binary.
