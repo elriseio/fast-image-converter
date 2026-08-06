@@ -58,11 +58,11 @@ error (exit `2`).
 The `--keep-source` flag is silently ignored in single-file mode
 because stdin has no associated filesystem metadata to remove.
 
-### 2.1. `--resize` 3-arg form (DE-007)
+### 2.1. `--resize` 3-arg form
 
-`fit=<mode> long-edge=<N>` is a 3-arg shape introduced in
-DE-007 AC-DE-007-1 to support the elrise.io page-side advanced
-panel's three fit semantics (the elrise.io side is DE-031; the
+`fit=<mode> long-edge=<N>` is a 3-arg shape that supports the
+elrise.io page-side advanced panel's three fit semantics
+(the elrise.io side is DE-031; the
 Go backend already wires `X-Resize-Mode` / `X-Resize-Max-Long-Edge`
 and constructs the subprocess invocation as
 `--resize fit=<mode> long-edge=<N>`).
@@ -81,12 +81,12 @@ below `MAX_DIMENSION` so the resize path can never overflow
 The 3-arg shape is only consumed when the first token after
 `--resize` starts with `fit=`. The legacy 1-arg shapes
 (`none`, `cap=<W>`, `auto:portrait=<W>,landscape=<H>`) keep their
-original semantics (DE-007 AC-DE-007-A4); the parser branches on
+original semantics; the parser branches on
 the prefix and consumes either 1 or 2 additional positional
 tokens depending on the first token.
 
 The JSON `codec.resize_policy` field carries the round-trippable
-form (DE-007 AC-DE-007-A5): `fit=cover long-edge=512`,
+form: `fit=cover long-edge=512`,
 `fit=contain long-edge=1024`, etc.
 
 ## 3. Exit-Code Contract

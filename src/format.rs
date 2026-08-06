@@ -81,7 +81,7 @@ pub(crate) fn checked_pixel_capacity(width: u32, height: u32) -> Result<usize, C
 ///
 /// The v0 baseline is `PortraitLandscape { portrait: 800, landscape: 1000 }`
 /// (see `docs/adr/0002-preserve-jpg-to-webp-baseline.md`). The `Fit`
-/// variant carries DE-007's `--resize fit=<mode> long-edge=<N>`
+/// variant carries the `--resize fit=<mode> long-edge=<N>`
 /// 3-arg form; `Fit` is a deliberate superset of the older shapes
 /// (it accepts three fit modes that the older shapes cannot express).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -93,7 +93,7 @@ pub enum ResizePolicy {
 }
 
 /// Fit-mode enum used by the
-/// `--resize fit=<mode> long-edge=<N>` 3-arg form (DE-007).
+/// `--resize fit=<mode> long-edge=<N>` 3-arg form.
 ///
 /// The three modes map onto the three image-resize semantics the
 /// page-side advanced panel exposes (per the elrise.io side of

@@ -127,7 +127,7 @@ curated operator-facing view.
 | `--input-format <fmt>` | enum | `jpg` | `jpg`, `jpeg`, `png`, or `webp` (case-insensitive; `jpg` and `jpeg` are aliases) |
 | `--output-format <fmt>` | enum | `webp` | `jpg`, `jpeg`, `png`, or `webp` (case-insensitive; `jpg` and `jpeg` are aliases) |
 | `--quality <1..100>` | integer | `85` | encoder quality; honoured by WebP and JPEG outputs, ignored by PNG (lossless) |
-| `--resize <policy>` | enum | `auto:portrait=800,landscape=1000` | one of `none`, `cap=<W>`, `auto:portrait=<W>,landscape=<H>`, or **`fit=<mode> long-edge=<N>`** (mode ∈ `contain` \| `cover` \| `stretch`; `<N>` ∈ [1, 20000]). The `fit=<mode> long-edge=<N>` shape is accepted by the binary (closed `DE-007`); the elrise.io page-side advanced panel already wires it (closed `DE-031` in the elrise.io project's issue queue), and `X-Resize-Mode` / `X-Resize-Max-Long-Edge` round-trip end-to-end through the subprocess. |
+| `--resize <policy>` | enum | `auto:portrait=800,landscape=1000` | one of `none`, `cap=<W>`, `auto:portrait=<W>,landscape=<H>`, or **`fit=<mode> long-edge=<N>`** (mode ∈ `contain` \| `cover` \| `stretch`; `<N>` ∈ [1, 20000]). The `fit=<mode> long-edge=<N>` shape is accepted by the binary; the elrise.io page-side advanced panel already wires it (closed `DE-031` in the elrise.io project's issue queue), and `X-Resize-Mode` / `X-Resize-Max-Long-Edge` round-trip end-to-end through the subprocess. |
 | `--keep-source` | flag | `false` | leave the source file in place after a successful conversion; **batch mode only**, silently ignored in `--single-file` |
 | `--single-file`, `-1` | flag | `false` | read one image from stdin, write the encoded image bytes to stdout |
 | `--json` | flag | `false` | emit per-file metadata as a structured NDJSON record (`schema_version: 1`) instead of the v0 key=value line |
@@ -160,7 +160,7 @@ The `--resize` flag accepts four shapes:
 | `fit=cover long-edge=<N>` | scale to *cover* the `<N>`×`<N>` box; preserve aspect ratio; centre-crop to `<N>`×`<N>` |
 | `fit=stretch long-edge=<N>` | scale to exact `<N>`×`<N>`; aspect ratio is **not** preserved |
 
-The `fit=<mode> long-edge=<N>` shape (DE-007) consumes two
+The `fit=<mode> long-edge=<N>` shape consumes two
 additional positional tokens after `--resize`; the legacy 1-arg
 shapes keep their original semantics (parser branches on the
 `fit=` prefix). The `X-Resize-Mode` / `X-Resize-Max-Long-Edge`
@@ -292,7 +292,7 @@ linker.
   [`docs/ROADMAP.md`](docs/ROADMAP.md) § Wave 2.
 - **Resize fit-mode (contain / cover / stretch)**: the
   `--resize fit=<mode> long-edge=<N>` shape is **accepted** by this
-  CLI today (closed `DE-007`). The elrise.io page-side advanced
+  CLI today. The elrise.io page-side advanced
   panel already passes `fit=<mode> long-edge=<N>` to the subprocess
   (closed `DE-031` in the elrise.io project's issue queue); the
   subprocess now decodes the three-arg shape and round-trips the

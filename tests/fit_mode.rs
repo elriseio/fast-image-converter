@@ -1,5 +1,5 @@
 //! End-to-end integration tests for the `--resize fit=<mode> long-edge=<N>`
-//! 3-arg form (DE-007 AC-DE-007-5 + AC-DE-007-A5).
+//! 3-arg form.
 //!
 //! The binary is invoked as the canonical `fast-image-converter`
 //! target; the batch mode is used so the output dimensions can be
@@ -247,7 +247,7 @@ fn fit_zero_long_edge_exits_two_with_range_error() {
     );
 }
 
-// AC-DE-007-A5: a request with `--resize fit=cover long-edge=512`
+// A request with `--resize fit=cover long-edge=512`
 // produces a JSON report with `resize_policy: "fit=cover long-edge=512"`.
 // Run the binary in batch mode with `--json`, capture stderr, and
 // grep the recorded NDJSON line for the round-tripped policy.

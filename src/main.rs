@@ -122,11 +122,10 @@ fn parse_cli(args: &[String]) -> Result<Cli, CliError> {
             "--resize" => {
                 let v = args.get(i + 1).ok_or(CliError::Usage)?;
                 if let Some(mode) = v.strip_prefix("fit=") {
-                    // DE-007 AC-DE-007-1: `--resize fit=<mode> long-edge=<N>`
-                    // consumes two additional positional args. The
-                    // missing-long-edge case is surfaced as BadResize
-                    // (not Usage) so the operator gets the specific
-                    // error from the parser.
+                    // `--resize fit=<mode> long-edge=<N>` consumes two
+                    // additional positional args. The missing-long-edge
+                    // case is surfaced as BadResize (not Usage) so the
+                    // operator gets the specific error from the parser.
                     let long_edge_arg = args.get(i + 2).ok_or_else(|| {
                         CliError::BadResize("expected long-edge=<N> after fit=<mode>".to_string())
                     })?;
@@ -863,8 +862,7 @@ fn emit_single_file_failure_report(
 /// `parse_resize_fit`. Used by the `--json` mode; the v0
 /// key=value shape does not embed the policy. The `Fit` arm
 /// renders the exact form the CLI parser expects in the
-/// `--resize fit=<mode> long-edge=<N>` slot (DE-007 AC-DE-007-4
-/// + AC-DE-007-A5).
+/// `--resize fit=<mode> long-edge=<N>` slot.
 fn resize_policy_to_string(p: crate::format::ResizePolicy) -> String {
     use crate::format::ResizePolicy;
     match p {
@@ -1430,11 +1428,11 @@ mod cli_tests {
         assert_eq!(Format::parse("tiff"), None);
     }
 
-    // DE-007 AC-DE-007-1: CLI parser accepts the
-    // `--resize fit=<mode> long-edge=<N>` 3-arg form. The mode
-    // token lives in the first slot after `--resize`; `long-edge=`
-    // lives in the second slot. The parser must consume all three
-    // tokens (i += 3) regardless of which other flags follow.
+    // CLI parser accepts the `--resize fit=<mode> long-edge=<N>`
+    // 3-arg form. The mode token lives in the first slot after
+    // `--resize`; `long-edge=` lives in the second slot. The parser
+    // must consume all three tokens (i += 3) regardless of which
+    // other flags follow.
     #[test]
     fn parse_cli_accepts_fit_contain_long_edge() {
         let cli = parse_cli(&v(&[
@@ -1495,8 +1493,8 @@ mod cli_tests {
     // The legacy 1-arg shapes must keep working unchanged when the
     // value is not `fit=...`. The parser branches on the prefix,
     // so a `cap=` / `auto:` / `none` value continues to take the
-    // i += 2 path (DE-007 AC-DE-007-A4: public CLI contract for
-    // existing shapes is unchanged).
+    // i += 2 path; public CLI contract for existing shapes is
+    // unchanged.
     #[test]
     fn parse_cli_legacy_shapes_still_take_one_arg() {
         let cli = parse_cli(&v(&[
@@ -1530,9 +1528,9 @@ mod cli_tests {
         assert_eq!(cli.resize, Some(crate::format::ResizePolicy::None));
     }
 
-    // AC-DE-007-2: the 3-arg shape's `fit=` token followed by a
-    // missing `long-edge=<N>` token surfaces as `BadResize`, not
-    // as a silent fall-through to the legacy parser.
+    // The 3-arg shape's `fit=` token followed by a missing
+    // `long-edge=<N>` token surfaces as `BadResize`, not as a
+    // silent fall-through to the legacy parser.
     #[test]
     fn parse_cli_fit_missing_long_edge_is_bad_resize() {
         let err = parse_cli(&v(&[
@@ -1548,8 +1546,8 @@ mod cli_tests {
         );
     }
 
-    // AC-DE-007-5: a bogus fit mode surfaces as `BadResize` with
-    // the parser's mode-rejection message (not as Usage).
+    // A bogus fit mode surfaces as `BadResize` with the parser's
+    // mode-rejection message (not as Usage).
     #[test]
     fn parse_cli_fit_bogus_mode_is_bad_resize() {
         let err = parse_cli(&v(&[

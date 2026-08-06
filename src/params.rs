@@ -67,7 +67,7 @@ pub fn parse_resize(s: &str) -> Result<ResizePolicy, String> {
 }
 
 /// Parse the second and third args of the
-/// `--resize fit=<mode> long-edge=<N>` 3-arg form (DE-007 AC-DE-007-2).
+/// `--resize fit=<mode> long-edge=<N>` 3-arg form.
 ///
 /// `mode` is the raw token after `fit=` is stripped by the CLI parser
 /// (e.g. `"contain"`, `"cover"`, `"stretch"`); `long_edge_arg` is the
