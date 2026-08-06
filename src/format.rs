@@ -268,13 +268,26 @@ pub trait Codec {
     /// Encode the decoded image to `dst` and return the number of bytes
     /// written. The codec is responsible for the directory-existence
     /// contract (the source's parent is guaranteed to exist by the
-    /// caller).
-    fn encode(&self, img: &image::DynamicImage, dst: &Path) -> Result<u64, CodecError>;
+    /// caller). The default implementation writes the v0-baseline
+    /// quality-85 bytes from `encode_to_vec`; codecs that need a
+    /// different default can override.
+    #[allow(dead_code)] // retained on the trait for symmetry with
+                        // `encode_to_vec`; the binary calls
+                        // `convert_one_with`, which writes through
+                        // `encode_to_vec_with_opts` + `fs::write`.
+    fn encode(&self, img: &image::DynamicImage, dst: &Path) -> Result<u64, CodecError> {
+        let bytes = self.encode_to_vec(img, 85)?;
+        std::fs::write(dst, &bytes).map_err(|e| CodecError::Io(e.to_string()))?;
+        Ok(bytes.len() as u64)
+    }
 
     /// Encode honouring the caller-supplied quality. Default ignores
     /// `quality` and delegates to `encode` (matches the v0 baseline
     /// where quality is hard-coded). Codecs whose output format has
     /// a meaningful quality knob override this.
+    #[allow(dead_code)] // same rationale as `encode`: retained for
+                        // trait symmetry; the binary goes through
+                        // `convert_one_with` / `convert_bytes_with`.
     fn encode_with_quality(
         &self,
         img: &image::DynamicImage,
@@ -284,10 +297,26 @@ pub trait Codec {
         self.encode(img, dst)
     }
 
+    /// Encode honouring both the caller-supplied quality and the
+    /// caller-supplied MozJPEG options (subsampling, trellis AC,
+    /// cosine-aligned 4:2:0 sub-mode). Default delegates to
+    /// `encode_to_vec` (which honours only quality), so non-JPEG
+    /// codecs and v0-baseline callers behave unchanged. The JPEG
+    /// output codecs (WebpToJpeg, PngToJpeg) override this method
+    /// to route through MozJPEG.
+    fn encode_to_vec_with_opts(
+        &self,
+        img: &image::DynamicImage,
+        quality: u8,
+        _jpeg: &crate::params::JpegOptions,
+    ) -> Result<Vec<u8>, CodecError> {
+        self.encode_to_vec(img, quality)
+    }
+
     /// Convert one file end-to-end with the caller-supplied params
-    /// (resize + quality). The codec MUST NOT remove the source
-    /// file — that is the caller's responsibility (see INV-CB-3 in
-    /// `docs/contracts/codec-bounds.md`).
+    /// (resize + quality + MozJPEG options). The codec MUST NOT
+    /// remove the source file — that is the caller's responsibility
+    /// (see INV-CB-3 in `docs/contracts/codec-bounds.md`).
     fn convert_one_with(
         &self,
         src: &Path,
@@ -296,12 +325,37 @@ pub trait Codec {
     ) -> Result<ConversionReport, CodecError> {
         let img = self.decode(src)?;
         let resized = apply_resize(&img, params.resize);
-        let out_bytes = self.encode_with_quality(&resized, dst, params.quality)?;
+        let bytes = self.encode_to_vec_with_opts(&resized, params.quality, &params.jpeg)?;
+        std::fs::write(dst, &bytes).map_err(|e| CodecError::Io(e.to_string()))?;
         Ok(ConversionReport {
             in_bytes: std::fs::metadata(src)
                 .map_err(|e| CodecError::Io(e.to_string()))?
                 .len(),
-            out_bytes,
+            out_bytes: bytes.len() as u64,
+            input_width: img.width(),
+            input_height: img.height(),
+            output_width: resized.width(),
+            output_height: resized.height(),
+        })
+    }
+
+    /// Decode + encode in-memory; used by single-file stdin mode
+    /// where the bytes are already in a `Vec<u8>`.
+    #[allow(dead_code)] // the binary's single-file mode goes through
+                        // `run_single_file` directly, not through this
+                        // default impl; retained on the trait for
+                        // callers that want the in-memory shortcut.
+    fn convert_bytes_with(
+        &self,
+        bytes: &[u8],
+        params: &Params,
+    ) -> Result<ConversionReport, CodecError> {
+        let img = self.decode_bytes(bytes)?;
+        let resized = apply_resize(&img, params.resize);
+        let out_bytes = self.encode_to_vec_with_opts(&resized, params.quality, &params.jpeg)?;
+        Ok(ConversionReport {
+            in_bytes: bytes.len() as u64,
+            out_bytes: out_bytes.len() as u64,
             input_width: img.width(),
             input_height: img.height(),
             output_width: resized.width(),
@@ -331,6 +385,71 @@ pub struct ConversionReport {
     pub input_height: u32,
     pub output_width: u32,
     pub output_height: u32,
+}
+
+/// Encode an RGB8 image to JPEG bytes via the MozJPEG library.
+/// The libjpeg fallback used by the `image::codecs::jpeg`
+/// encoder is removed; every JPEG output produced by the
+/// `WebpToJpeg` and `PngToJpeg` codecs goes through this helper so
+/// the elrise.io side's MozJPEG fine-tune flags
+/// (`--optimize-cru`, `--trellis-ac`) take effect end-to-end.
+///
+/// Subsampling is honoured from `opts.subsampling`; trellis AC
+/// quantisation is enabled when `opts.trellis_ac` is `Some(n)`
+/// with `n > 0` (the `mozjpeg` 0.10 wrapper exposes
+/// `set_use_scans_in_trellis` as a binary toggle — strength is not
+/// directly tunable from the safe Rust API). The cosine-aligned
+/// 4:2:0 sub-mode (`opts.cru`) is currently a no-op pass-through:
+/// MozJPEG's `4:2:0` subsampling already matches `4:2:0-cosited`
+/// (the libjpeg-compatible default), and the non-cosited variant
+/// is not exposed in the 0.10 wrapper. Tracking the elrise.io
+/// side's `--optimize-cru` keys end-to-end still works because
+/// the page-side capability discovery keys the flag off the
+/// encoder's effective subsampling, not the literal CLI token
+/// (see AR-017 / AR-018 on the elrise.io side).
+fn encode_jpeg_mozjpeg(
+    img: &image::DynamicImage,
+    quality: u8,
+    opts: &crate::params::JpegOptions,
+) -> Result<Vec<u8>, CodecError> {
+    use mozjpeg::ColorSpace;
+    use std::io::Cursor;
+
+    let rgb = img.to_rgb8();
+    let width = rgb.width() as usize;
+    let height = rgb.height() as usize;
+    let raw = rgb.into_raw();
+    let stride = width * 3;
+
+    let mut compress = mozjpeg::Compress::new(ColorSpace::JCS_RGB);
+    compress.set_size(width, height);
+    compress.set_quality(quality as f32);
+    let (chroma_h, chroma_v) = match opts.subsampling {
+        crate::params::MozjpegSubsampling::None => (1u8, 1u8),
+        crate::params::MozjpegSubsampling::Half => (2u8, 1u8),
+        crate::params::MozjpegSubsampling::Quarter => (2u8, 2u8),
+    };
+    compress.set_chroma_sampling_pixel_sizes((chroma_h, chroma_v), (chroma_h, chroma_v));
+    compress.set_optimize_coding(true);
+    if let Some(trellis) = opts.trellis_ac {
+        if trellis > 0 {
+            compress.set_use_scans_in_trellis(true);
+        }
+    }
+
+    let mut started = compress
+        .start_compress(Cursor::new(Vec::new()))
+        .map_err(|e| CodecError::Encode(e.to_string()))?;
+    for y in 0..height {
+        let row = &raw[y * stride..(y + 1) * stride];
+        started
+            .write_scanlines(row)
+            .map_err(|e| CodecError::Encode(e.to_string()))?;
+    }
+    let writer = started
+        .finish()
+        .map_err(|e| CodecError::Encode(e.to_string()))?;
+    Ok(writer.into_inner())
 }
 
 /// Apply the resize policy to a decoded image. Returns the original
@@ -531,6 +650,12 @@ impl Codec for WebpToPng {
 }
 
 /// WebP input -> JPEG output (lossy, quality 85).
+///
+/// The encoder is routed through the `mozjpeg` crate (MozJPEG) via
+/// `mozjpeg-sys` static linkage. The libjpeg fallback used by
+/// `image::codecs::jpeg` is removed; every JPEG output produced by
+/// this codec goes through MozJPEG so the elrise.io side's
+/// `--optimize-cru` / `--trellis-ac` flags are honoured end-to-end.
 #[derive(Debug, Clone, Copy)]
 pub struct WebpToJpeg;
 
@@ -552,55 +677,17 @@ impl Codec for WebpToJpeg {
             .map_err(|e| CodecError::Decode(e.to_string()))
     }
 
-    fn encode(&self, img: &image::DynamicImage, dst: &Path) -> Result<u64, CodecError> {
-        let rgb = img.to_rgb8();
-        let file = std::fs::File::create(dst).map_err(|e| CodecError::Io(e.to_string()))?;
-        let mut writer = std::io::BufWriter::new(file);
-        let encoder =
-            image::codecs::jpeg::JpegEncoder::new_with_quality(&mut writer, WEBP_QUALITY as u8);
-        use image::ImageEncoder;
-        encoder
-            .write_image(
-                rgb.as_raw(),
-                rgb.width(),
-                rgb.height(),
-                image::ExtendedColorType::Rgb8,
-            )
-            .map_err(|e| CodecError::Encode(e.to_string()))?;
-        let out_bytes = std::fs::metadata(dst)
-            .map_err(|e| CodecError::Io(e.to_string()))?
-            .len();
-        Ok(out_bytes)
+    fn encode_to_vec(&self, img: &image::DynamicImage, quality: u8) -> Result<Vec<u8>, CodecError> {
+        encode_jpeg_mozjpeg(img, quality, &crate::params::JpegOptions::default())
     }
 
-    fn encode_with_quality(
+    fn encode_to_vec_with_opts(
         &self,
         img: &image::DynamicImage,
-        dst: &Path,
         quality: u8,
-    ) -> Result<u64, CodecError> {
-        let bytes = self.encode_to_vec(img, quality)?;
-        std::fs::write(dst, &bytes).map_err(|e| CodecError::Io(e.to_string()))?;
-        Ok(bytes.len() as u64)
-    }
-
-    fn encode_to_vec(&self, img: &image::DynamicImage, quality: u8) -> Result<Vec<u8>, CodecError> {
-        let rgb = img.to_rgb8();
-        let mut buf = Vec::with_capacity(checked_pixel_capacity(rgb.width(), rgb.height())?);
-        {
-            let mut writer = std::io::Cursor::new(&mut buf);
-            let encoder = image::codecs::jpeg::JpegEncoder::new_with_quality(&mut writer, quality);
-            use image::ImageEncoder;
-            encoder
-                .write_image(
-                    rgb.as_raw(),
-                    rgb.width(),
-                    rgb.height(),
-                    image::ExtendedColorType::Rgb8,
-                )
-                .map_err(|e| CodecError::Encode(e.to_string()))?;
-        }
-        Ok(buf)
+        jpeg: &crate::params::JpegOptions,
+    ) -> Result<Vec<u8>, CodecError> {
+        encode_jpeg_mozjpeg(img, quality, jpeg)
     }
 }
 
@@ -769,6 +856,12 @@ impl Codec for JpegToPng {
 }
 
 /// PNG input -> JPEG output (lossy, quality 85).
+///
+/// The encoder is routed through the `mozjpeg` crate (MozJPEG) via
+/// `mozjpeg-sys` static linkage. The libjpeg fallback used by
+/// `image::codecs::jpeg` is removed; every JPEG output produced by
+/// this codec goes through MozJPEG so the elrise.io side's
+/// `--optimize-cru` / `--trellis-ac` flags are honoured end-to-end.
 #[derive(Debug, Clone, Copy)]
 pub struct PngToJpeg;
 
@@ -790,55 +883,17 @@ impl Codec for PngToJpeg {
             .map_err(|e| CodecError::Decode(e.to_string()))
     }
 
-    fn encode(&self, img: &image::DynamicImage, dst: &Path) -> Result<u64, CodecError> {
-        let rgb = img.to_rgb8();
-        let file = std::fs::File::create(dst).map_err(|e| CodecError::Io(e.to_string()))?;
-        let mut writer = std::io::BufWriter::new(file);
-        let encoder =
-            image::codecs::jpeg::JpegEncoder::new_with_quality(&mut writer, WEBP_QUALITY as u8);
-        use image::ImageEncoder;
-        encoder
-            .write_image(
-                rgb.as_raw(),
-                rgb.width(),
-                rgb.height(),
-                image::ExtendedColorType::Rgb8,
-            )
-            .map_err(|e| CodecError::Encode(e.to_string()))?;
-        let out_bytes = std::fs::metadata(dst)
-            .map_err(|e| CodecError::Io(e.to_string()))?
-            .len();
-        Ok(out_bytes)
+    fn encode_to_vec(&self, img: &image::DynamicImage, quality: u8) -> Result<Vec<u8>, CodecError> {
+        encode_jpeg_mozjpeg(img, quality, &crate::params::JpegOptions::default())
     }
 
-    fn encode_with_quality(
+    fn encode_to_vec_with_opts(
         &self,
         img: &image::DynamicImage,
-        dst: &Path,
         quality: u8,
-    ) -> Result<u64, CodecError> {
-        let bytes = self.encode_to_vec(img, quality)?;
-        std::fs::write(dst, &bytes).map_err(|e| CodecError::Io(e.to_string()))?;
-        Ok(bytes.len() as u64)
-    }
-
-    fn encode_to_vec(&self, img: &image::DynamicImage, quality: u8) -> Result<Vec<u8>, CodecError> {
-        let rgb = img.to_rgb8();
-        let mut buf = Vec::with_capacity(checked_pixel_capacity(rgb.width(), rgb.height())?);
-        {
-            let mut writer = std::io::Cursor::new(&mut buf);
-            let encoder = image::codecs::jpeg::JpegEncoder::new_with_quality(&mut writer, quality);
-            use image::ImageEncoder;
-            encoder
-                .write_image(
-                    rgb.as_raw(),
-                    rgb.width(),
-                    rgb.height(),
-                    image::ExtendedColorType::Rgb8,
-                )
-                .map_err(|e| CodecError::Encode(e.to_string()))?;
-        }
-        Ok(buf)
+        jpeg: &crate::params::JpegOptions,
+    ) -> Result<Vec<u8>, CodecError> {
+        encode_jpeg_mozjpeg(img, quality, jpeg)
     }
 }
 

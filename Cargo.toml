@@ -60,6 +60,13 @@ panic = "abort"
 image = { version = "0.25", default-features = false, features = ["jpeg", "png", "webp"] }
 rayon = "1.10"
 webp = "0.3"
+# `mozjpeg` is the high-level Rust wrapper around `mozjpeg-sys`
+# (which builds MozJPEG statically from source). The WebpToJpeg /
+# PngToJpeg codecs are routed through this crate so the elrise.io
+# side can expose `--optimize-cru` / `--trellis-ac` flags without
+# silent no-op headers. Static linkage avoids any `libmozjpeg`
+# system dependency at deploy time.
+mozjpeg = "0.10"
 # `libc` is used by `--report-fd` validation (fcntl / F_GETFL) to
 # verify that the operator-supplied fd is open for writing; it is
 # already a transitive dep of the `webp` crate (via `webp-sys`) but

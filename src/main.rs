@@ -30,6 +30,9 @@ enum CliError {
     BadQuality(String),
     BadResize(String),
     BadReportFd(String),
+    BadSubsampling(String),
+    BadOptimizeCru(String),
+    BadTrellisAc(String),
     AmbiguousMode,
 }
 
@@ -61,6 +64,17 @@ struct Cli {
     /// single-file mode) and non-writable fds are rejected with
     /// usage + exit 2.
     report_fd: i32,
+    /// MozJPEG subsampling override (4:4:4 / 4:2:2 / 4:2:0).
+    /// Only honoured for JPEG output. `None` keeps MozJPEG's default.
+    subsampling: Option<crate::params::MozjpegSubsampling>,
+    /// MozJPEG cosine-aligned 4:2:0 sub-mode (4:4:4 / 4:2:2 /
+    /// 4:2:0-cosited / 4:2:0-non-cosited). Only honoured for JPEG
+    /// output. `None` keeps MozJPEG's default.
+    optimize_cru: Option<crate::params::MozjpegCru>,
+    /// MozJPEG trellis AC quantisation strength (0..=50). Only
+    /// honoured for JPEG output. `None` keeps MozJPEG's default
+    /// (no trellis).
+    trellis_ac: Option<u8>,
 }
 
 /// Bounded context shared by every per-file report emitter. Bundles
@@ -97,6 +111,9 @@ fn parse_cli(args: &[String]) -> Result<Cli, CliError> {
     let mut single_file = false;
     let mut json = false;
     let mut report_fd: i32 = 2;
+    let mut subsampling: Option<crate::params::MozjpegSubsampling> = None;
+    let mut optimize_cru: Option<crate::params::MozjpegCru> = None;
+    let mut trellis_ac: Option<u8> = None;
 
     let mut i = 1;
     while i < args.len() {
@@ -117,6 +134,35 @@ fn parse_cli(args: &[String]) -> Result<Cli, CliError> {
             "--quality" => {
                 let v = args.get(i + 1).ok_or(CliError::Usage)?;
                 quality = Some(parse_quality(v).map_err(CliError::BadQuality)?);
+                i += 2;
+            }
+            "--subsampling" => {
+                let v = args.get(i + 1).ok_or(CliError::Usage)?;
+                subsampling = Some(
+                    v.parse::<crate::params::MozjpegSubsampling>()
+                        .map_err(CliError::BadSubsampling)?,
+                );
+                i += 2;
+            }
+            "--optimize-cru" => {
+                let v = args.get(i + 1).ok_or(CliError::Usage)?;
+                optimize_cru = Some(
+                    v.parse::<crate::params::MozjpegCru>()
+                        .map_err(CliError::BadOptimizeCru)?,
+                );
+                i += 2;
+            }
+            "--trellis-ac" => {
+                let v = args.get(i + 1).ok_or(CliError::Usage)?;
+                let n: i64 = v
+                    .parse()
+                    .map_err(|_| CliError::BadTrellisAc(format!("{v:?}: not an integer")))?;
+                if !(0..=50).contains(&n) {
+                    return Err(CliError::BadTrellisAc(format!(
+                        "{v:?}: out of range 0..=50"
+                    )));
+                }
+                trellis_ac = Some(n as u8);
                 i += 2;
             }
             "--resize" => {
@@ -203,6 +249,9 @@ fn parse_cli(args: &[String]) -> Result<Cli, CliError> {
         keep_source,
         json,
         report_fd,
+        subsampling,
+        optimize_cru,
+        trellis_ac,
     })
 }
 
@@ -224,10 +273,22 @@ fn main() -> ExitCode {
                 CliError::BadResize(v) => eprintln!(
                     "{BINARY_NAME}: invalid --resize: {v} \
                      (expected 'none', 'cap=<W>', 'auto:portrait=<W>,landscape=<H>', \
-                     or 'fit=<mode> long-edge=<N>' with mode in {{contain, cover, stretch}})"
+                      or 'fit=<mode> long-edge=<N>' with mode in {{contain, cover, stretch}})"
                 ),
                 CliError::BadReportFd(v) => eprintln!(
                     "{BINARY_NAME}: invalid --report-fd: {v} (expected integer 0, 2, or a writable fd)"
+                ),
+                CliError::BadSubsampling(v) => eprintln!(
+                    "{BINARY_NAME}: invalid --subsampling: {v} \
+                     (expected 4:4:4, 4:2:2, or 4:2:0)"
+                ),
+                CliError::BadOptimizeCru(v) => eprintln!(
+                    "{BINARY_NAME}: invalid --optimize-cru: {v} \
+                     (expected 4:4:4, 4:2:2, 4:2:0-cosited, or 4:2:0-non-cosited)"
+                ),
+                CliError::BadTrellisAc(v) => eprintln!(
+                    "{BINARY_NAME}: invalid --trellis-ac: {v} \
+                     (expected integer in 0..=50)"
                 ),
                 CliError::AmbiguousMode => eprintln!(
                     "{BINARY_NAME}: --single-file does not accept a positional argument"
@@ -311,6 +372,13 @@ fn main() -> ExitCode {
         params.resize = r;
     }
     params.keep_source = cli.keep_source;
+    let mut jpeg = crate::params::JpegOptions::default();
+    if let Some(s) = cli.subsampling {
+        jpeg.subsampling = s;
+    }
+    jpeg.cru = cli.optimize_cru;
+    jpeg.trellis_ac = cli.trellis_ac;
+    params.jpeg = jpeg;
 
     let candidates: Vec<PathBuf> = match fs::read_dir(&dir) {
         Ok(rd) => rd
@@ -501,6 +569,13 @@ fn run_single_file(cli: &Cli) -> ExitCode {
     if let Some(r) = cli.resize {
         params.resize = r;
     }
+    let mut jpeg = crate::params::JpegOptions::default();
+    if let Some(s) = cli.subsampling {
+        jpeg.subsampling = s;
+    }
+    jpeg.cru = cli.optimize_cru;
+    jpeg.trellis_ac = cli.trellis_ac;
+    params.jpeg = jpeg;
     // keep_source is silently ignored in single-file mode (no
     // source filesystem path to preserve).
 
@@ -1245,9 +1320,11 @@ fn print_usage() {
     eprintln!(
         "Usage: fast-image-converter <dir> [--input-format <fmt>] [--output-format <fmt>]\n\
          \x20                                [--quality <1..100>] [--resize <policy>] [--keep-source]\n\
+         \x20                                [--subsampling <mode>] [--optimize-cru <mode>] [--trellis-ac <0..50>]\n\
          \x20                                [--json] [--report-fd <N>]\n\
          \x20          fast-image-converter --single-file [--input-format <fmt>] [--output-format <fmt>]\n\
          \x20                                [--quality <1..100>] [--resize <policy>]\n\
+         \x20                                [--subsampling <mode>] [--optimize-cru <mode>] [--trellis-ac <0..50>]\n\
          \x20                                [--json] [--report-fd <N>]\n\
          \n\
          Arguments:\n\
@@ -1261,6 +1338,11 @@ fn print_usage() {
          \x20                       | 'fit=<mode> long-edge=<N>'   (mode: contain | cover | stretch)\n\
          \x20                       (default: auto:portrait=800,landscape=1000)\n\
          \x20 --keep-source          leave the source file in place after a successful conversion (batch mode only)\n\
+         \x20 --subsampling <mode>   MozJPEG chroma subsampling for JPEG output: 4:4:4 | 4:2:2 | 4:2:0 (default: 4:2:0)\n\
+         \x20 --optimize-cru <mode>  MozJPEG cosine-aligned 4:2:0 sub-mode: 4:4:4 | 4:2:2 | 4:2:0-cosited | 4:2:0-non-cosited\n\
+         \x20                       (default: MozJPEG default; only honoured for JPEG output)\n\
+         \x20 --trellis-ac <n>       MozJPEG trellis AC quantisation strength, 0..=50 (default: 0 = disabled)\n\
+         \x20                       (only honoured for JPEG output)\n\
          \x20 --single-file, -1      read one image from stdin, write the encoded image to stdout\n\
          \x20 --json                 emit the per-file report as a structured NDJSON record (DE-005) instead of the v0 key=value line\n\
          \x20 --report-fd <N>        override the report stream fd (default 2; N=1 is forbidden)\n\
@@ -1276,6 +1358,7 @@ fn print_usage() {
          \x20 fast-image-converter /tmp/my-images --input-format webp --output-format png\n\
          \x20 fast-image-converter /tmp/my-images --input-format webp --output-format jpg\n\
          \x20 fast-image-converter /tmp/my-images --quality 75 --resize cap=1024 --keep-source\n\
+         \x20 fast-image-converter /tmp/my-images --input-format webp --output-format jpg --quality 80 --subsampling 4:2:2 --trellis-ac 5\n\
          \x20 cat input.jpg | fast-image-converter --single-file --output-format webp > output.webp\n\
          \x20 cat input.jpg | fast-image-converter --single-file --output-format webp --json > out.webp 2> report.jsonl\n\
          \n\

@@ -1,3 +1,4 @@
+use std::fmt;
 use std::str::FromStr;
 
 use crate::format::{FitMode, ResizePolicy};
@@ -9,6 +10,7 @@ pub struct Params {
     pub quality: u8,
     pub resize: ResizePolicy,
     pub keep_source: bool,
+    pub jpeg: JpegOptions,
 }
 
 impl Default for Params {
@@ -17,6 +19,133 @@ impl Default for Params {
             quality: DEFAULT_QUALITY,
             resize: ResizePolicy::default(),
             keep_source: false,
+            jpeg: JpegOptions::default(),
+        }
+    }
+}
+
+/// MozJPEG-specific options for the JPEG encoder path (WebpToJpeg,
+/// PngToJpeg). The JPEG encoder was migrated from libjpeg (via the
+/// `image` crate) to MozJPEG so the elrise.io side can expose
+/// MozJPEG fine-tune flags without silent no-op headers.
+///
+/// The default profile matches the v0 baseline (quarter-subsampled
+/// 4:2:0, Huffman-optimised). Each flag is opt-in: an absent flag
+/// falls back to the MozJPEG default, which is also libjpeg-compatible
+/// for the documented flag set.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct JpegOptions {
+    /// Chroma subsampling mode. Maps to `mozjpeg`'s `Subsampling`
+    /// enum (None = 4:4:4, Half = 4:2:2, Quarter = 4:2:0). The v0
+    /// default is `Quarter` (matches libjpeg's 4:2:0 default and
+    /// preserves byte-stability for callers that do not override).
+    pub subsampling: MozjpegSubsampling,
+    /// MozJPEG's cosine-aligned / non-aligned 4:2:0 sub-mode. Only
+    /// meaningful when `subsampling == Quarter`. Cosited sub-samples
+    /// chroma at half-pixel boundaries; non-cosited at integer
+    /// boundaries. `None` keeps MozJPEG's default.
+    pub cru: Option<MozjpegCru>,
+    /// Trellis AC quantisation strength, 0..=50. `0` disables the
+    /// pass; values above 0 trade encode time for additional
+    /// compression at the chosen quality. `None` keeps MozJPEG's
+    /// default (no trellis).
+    pub trellis_ac: Option<u8>,
+}
+
+impl Default for JpegOptions {
+    fn default() -> Self {
+        JpegOptions {
+            subsampling: MozjpegSubsampling::Quarter,
+            cru: None,
+            trellis_ac: None,
+        }
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum MozjpegSubsampling {
+    /// 4:4:4 — no chroma subsampling.
+    None,
+    /// 4:2:2 — half-rate chroma horizontal.
+    Half,
+    /// 4:2:0 — quarter-rate chroma (the v0 default; libjpeg-compatible).
+    Quarter,
+}
+
+impl MozjpegSubsampling {
+    pub(crate) fn as_str(self) -> &'static str {
+        match self {
+            MozjpegSubsampling::None => "4:4:4",
+            MozjpegSubsampling::Half => "4:2:2",
+            MozjpegSubsampling::Quarter => "4:2:0",
+        }
+    }
+}
+
+impl fmt::Display for MozjpegSubsampling {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.write_str(self.as_str())
+    }
+}
+
+impl FromStr for MozjpegSubsampling {
+    type Err = String;
+    fn from_str(s: &str) -> Result<Self, Self::Err> {
+        match s {
+            "4:4:4" => Ok(MozjpegSubsampling::None),
+            "4:2:2" => Ok(MozjpegSubsampling::Half),
+            "4:2:0" => Ok(MozjpegSubsampling::Quarter),
+            other => Err(format!(
+                "unknown subsampling: {other:?} (expected 4:4:4, 4:2:2, or 4:2:0)"
+            )),
+        }
+    }
+}
+
+/// MozJPEG cosine-aligned 4:2:0 sub-mode. Mirrors the elrise.io
+/// side's `--optimize-cru` contract (see DE-018 / AR-018 on the
+/// elrise.io side).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum MozjpegCru {
+    /// 4:4:4 — same as MozjpegSubsampling::None.
+    None,
+    /// 4:2:2 — half-rate chroma horizontal.
+    Half,
+    /// 4:2:0-cosited — quarter-rate, cosited at half-pixel boundaries.
+    QuarterCosited,
+    /// 4:2:0-non-cosited — quarter-rate, cosited at integer boundaries.
+    QuarterNonCosited,
+}
+
+impl MozjpegCru {
+    pub(crate) fn as_str(self) -> &'static str {
+        match self {
+            MozjpegCru::None => "4:4:4",
+            MozjpegCru::Half => "4:2:2",
+            MozjpegCru::QuarterCosited => "4:2:0-cosited",
+            MozjpegCru::QuarterNonCosited => "4:2:0-non-cosited",
+        }
+    }
+}
+
+impl fmt::Display for MozjpegCru {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.write_str(self.as_str())
+    }
+}
+
+impl FromStr for MozjpegCru {
+    type Err = String;
+    fn from_str(s: &str) -> Result<Self, Self::Err> {
+        match s {
+            "4:4:4" => Ok(MozjpegCru::None),
+            "4:2:2" => Ok(MozjpegCru::Half),
+            "4:2:0-cosited" => Ok(MozjpegCru::QuarterCosited),
+            "4:2:0-non-cosited" => Ok(MozjpegCru::QuarterNonCosited),
+            other => Err(format!(
+                "unknown optimize-cru: {other:?} \
+                 (expected 4:4:4, 4:2:2, 4:2:0-cosited, or 4:2:0-non-cosited)"
+            )),
         }
     }
 }
