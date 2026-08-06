@@ -49,7 +49,7 @@ error (exit `2`).
 | `--input-format <fmt>` | enum (`jpg` \| `png` \| `webp`, Wave 1) | both modes | inferred from extension (batch) or content sniffing (single-file) |
 | `--output-format <fmt>` | enum (`jpg` \| `png` \| `webp`, Wave 1) | both modes | `webp` |
 | `--quality <1..100>` | integer | both modes | `85` |
-| `--resize <policy>` | enum (`none` \| `cap=<W>` \| `auto:portrait=<W>,landscape=<H>`) | both modes | `auto:portrait=800,landscape=1000` (v0 baseline) |
+| `--resize <policy>` | enum (`none` \| `cap=<W>` \| `auto:portrait=<W>,landscape=<H>` \| `fit=<mode> long-edge=<N>`) | both modes | `auto:portrait=800,landscape=1000` (v0 baseline) |
 | `--keep-source` | boolean flag | batch mode only | `false` (source removed on success) |
 | `--single-file` | boolean flag | switches mode | `false` (batch) |
 | `--json` | boolean flag | both modes | `false` (legacy text metadata) |
@@ -57,6 +57,37 @@ error (exit `2`).
 
 The `--keep-source` flag is silently ignored in single-file mode
 because stdin has no associated filesystem metadata to remove.
+
+### 2.1. `--resize` 3-arg form (DE-007)
+
+`fit=<mode> long-edge=<N>` is a 3-arg shape introduced in
+DE-007 AC-DE-007-1 to support the elrise.io page-side advanced
+panel's three fit semantics (the elrise.io side is DE-031; the
+Go backend already wires `X-Resize-Mode` / `X-Resize-Max-Long-Edge`
+and constructs the subprocess invocation as
+`--resize fit=<mode> long-edge=<N>`).
+
+| `mode` | Output dimensions | Resize operation |
+|---|---|---|
+| `contain` | longest side = `N`, other side proportional | `image::DynamicImage::resize` (aspect-preserving, no crop, no pad) |
+| `cover`   | exactly `N × N` (square), centre-cropped | `image::DynamicImage::resize_to_fill` (aspect-preserving scale + centre crop) |
+| `stretch` | exactly `N × N` (square, ignoring aspect) | `image::DynamicImage::resize_exact` (distorts to target) |
+
+`<N>` must satisfy `1 ≤ N ≤ 20000` (mirrors the Go backend's
+`parseResize` validation; the upper bound keeps the result well
+below `MAX_DIMENSION` so the resize path can never overflow
+`width * height`).
+
+The 3-arg shape is only consumed when the first token after
+`--resize` starts with `fit=`. The legacy 1-arg shapes
+(`none`, `cap=<W>`, `auto:portrait=<W>,landscape=<H>`) keep their
+original semantics (DE-007 AC-DE-007-A4); the parser branches on
+the prefix and consumes either 1 or 2 additional positional
+tokens depending on the first token.
+
+The JSON `codec.resize_policy` field carries the round-trippable
+form (DE-007 AC-DE-007-A5): `fit=cover long-edge=512`,
+`fit=contain long-edge=1024`, etc.
 
 ## 3. Exit-Code Contract
 

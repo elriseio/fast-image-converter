@@ -13,7 +13,7 @@ mod report;
 use format::{
     CodecImpl, Format, JpegToPng, JpegToWebp, PngToJpeg, PngToWebp, WebpToJpeg, WebpToPng,
 };
-use params::parse_resize;
+use params::{parse_resize, parse_resize_fit};
 
 // Runtime error prefixes and the usage banner use the canonical
 // product name. Compatibility aliases (`convert-to-webp`,
@@ -121,8 +121,22 @@ fn parse_cli(args: &[String]) -> Result<Cli, CliError> {
             }
             "--resize" => {
                 let v = args.get(i + 1).ok_or(CliError::Usage)?;
-                resize = Some(parse_resize(v).map_err(CliError::BadResize)?);
-                i += 2;
+                if let Some(mode) = v.strip_prefix("fit=") {
+                    // DE-007 AC-DE-007-1: `--resize fit=<mode> long-edge=<N>`
+                    // consumes two additional positional args. The
+                    // missing-long-edge case is surfaced as BadResize
+                    // (not Usage) so the operator gets the specific
+                    // error from the parser.
+                    let long_edge_arg = args.get(i + 2).ok_or_else(|| {
+                        CliError::BadResize("expected long-edge=<N> after fit=<mode>".to_string())
+                    })?;
+                    resize =
+                        Some(parse_resize_fit(mode, long_edge_arg).map_err(CliError::BadResize)?);
+                    i += 3;
+                } else {
+                    resize = Some(parse_resize(v).map_err(CliError::BadResize)?);
+                    i += 2;
+                }
             }
             "--keep-source" => {
                 keep_source = true;
@@ -210,7 +224,8 @@ fn main() -> ExitCode {
                 ),
                 CliError::BadResize(v) => eprintln!(
                     "{BINARY_NAME}: invalid --resize: {v} \
-                     (expected 'none', 'cap=<W>', or 'auto:portrait=<W>,landscape=<H>')"
+                     (expected 'none', 'cap=<W>', 'auto:portrait=<W>,landscape=<H>', \
+                     or 'fit=<mode> long-edge=<N>' with mode in {{contain, cover, stretch}})"
                 ),
                 CliError::BadReportFd(v) => eprintln!(
                     "{BINARY_NAME}: invalid --report-fd: {v} (expected integer 0, 2, or a writable fd)"
@@ -844,9 +859,12 @@ fn emit_single_file_failure_report(
 }
 
 /// Format a `ResizePolicy` back to its CLI string form so the
-/// JSON report is round-trippable against `parse_resize`. Used by
-/// the `--json` mode; the v0 key=value shape does not embed the
-/// policy.
+/// JSON report is round-trippable against `parse_resize` /
+/// `parse_resize_fit`. Used by the `--json` mode; the v0
+/// key=value shape does not embed the policy. The `Fit` arm
+/// renders the exact form the CLI parser expects in the
+/// `--resize fit=<mode> long-edge=<N>` slot (DE-007 AC-DE-007-4
+/// + AC-DE-007-A5).
 fn resize_policy_to_string(p: crate::format::ResizePolicy) -> String {
     use crate::format::ResizePolicy;
     match p {
@@ -856,6 +874,9 @@ fn resize_policy_to_string(p: crate::format::ResizePolicy) -> String {
             portrait,
             landscape,
         } => format!("auto:portrait={portrait},landscape={landscape}"),
+        ResizePolicy::Fit { mode, long_edge } => {
+            format!("fit={mode} long-edge={long_edge}")
+        }
     }
 }
 
@@ -1238,7 +1259,9 @@ fn print_usage() {
          \x20 --input-format <fmt>   one of: jpg, png, webp (default: jpg)\n\
          \x20 --output-format <fmt>  one of: jpg, png, webp (default: webp)\n\
          \x20 --quality <n>          encode quality in 1..100 (default: 85; honoured by WebP and JPEG outputs)\n\
-         \x20 --resize <policy>      'none' | 'cap=<W>' | 'auto:portrait=<W>,landscape=<H>' (default: auto:portrait=800,landscape=1000)\n\
+         \x20 --resize <policy>      'none' | 'cap=<W>' | 'auto:portrait=<W>,landscape=<H>'\n\
+         \x20                       | 'fit=<mode> long-edge=<N>'   (mode: contain | cover | stretch)\n\
+         \x20                       (default: auto:portrait=800,landscape=1000)\n\
          \x20 --keep-source          leave the source file in place after a successful conversion (batch mode only)\n\
          \x20 --single-file, -1      read one image from stdin, write the encoded image to stdout\n\
          \x20 --json                 emit the per-file report as a structured NDJSON record (DE-005) instead of the v0 key=value line\n\
@@ -1405,6 +1428,196 @@ mod cli_tests {
         assert_eq!(Format::parse("webp"), Some(Format::Webp));
         assert_eq!(Format::parse("WebP"), Some(Format::Webp));
         assert_eq!(Format::parse("tiff"), None);
+    }
+
+    // DE-007 AC-DE-007-1: CLI parser accepts the
+    // `--resize fit=<mode> long-edge=<N>` 3-arg form. The mode
+    // token lives in the first slot after `--resize`; `long-edge=`
+    // lives in the second slot. The parser must consume all three
+    // tokens (i += 3) regardless of which other flags follow.
+    #[test]
+    fn parse_cli_accepts_fit_contain_long_edge() {
+        let cli = parse_cli(&v(&[
+            "fast-image-converter",
+            "/tmp/x",
+            "--resize",
+            "fit=contain",
+            "long-edge=1024",
+        ]))
+        .unwrap();
+        assert_eq!(
+            cli.resize,
+            Some(crate::format::ResizePolicy::Fit {
+                mode: crate::format::FitMode::Contain,
+                long_edge: 1024
+            })
+        );
+    }
+
+    #[test]
+    fn parse_cli_accepts_fit_cover_long_edge() {
+        let cli = parse_cli(&v(&[
+            "fast-image-converter",
+            "/tmp/x",
+            "--resize",
+            "fit=cover",
+            "long-edge=512",
+        ]))
+        .unwrap();
+        assert_eq!(
+            cli.resize,
+            Some(crate::format::ResizePolicy::Fit {
+                mode: crate::format::FitMode::Cover,
+                long_edge: 512
+            })
+        );
+    }
+
+    #[test]
+    fn parse_cli_accepts_fit_stretch_long_edge() {
+        let cli = parse_cli(&v(&[
+            "fast-image-converter",
+            "/tmp/x",
+            "--resize",
+            "fit=stretch",
+            "long-edge=256",
+        ]))
+        .unwrap();
+        assert_eq!(
+            cli.resize,
+            Some(crate::format::ResizePolicy::Fit {
+                mode: crate::format::FitMode::Stretch,
+                long_edge: 256
+            })
+        );
+    }
+
+    // The legacy 1-arg shapes must keep working unchanged when the
+    // value is not `fit=...`. The parser branches on the prefix,
+    // so a `cap=` / `auto:` / `none` value continues to take the
+    // i += 2 path (DE-007 AC-DE-007-A4: public CLI contract for
+    // existing shapes is unchanged).
+    #[test]
+    fn parse_cli_legacy_shapes_still_take_one_arg() {
+        let cli = parse_cli(&v(&[
+            "fast-image-converter",
+            "/tmp/x",
+            "--resize",
+            "cap=1024",
+        ]))
+        .unwrap();
+        assert_eq!(
+            cli.resize,
+            Some(crate::format::ResizePolicy::MaxWidth(1024))
+        );
+
+        let cli = parse_cli(&v(&[
+            "fast-image-converter",
+            "/tmp/x",
+            "--resize",
+            "auto:portrait=800,landscape=1000",
+        ]))
+        .unwrap();
+        assert_eq!(
+            cli.resize,
+            Some(crate::format::ResizePolicy::PortraitLandscape {
+                portrait: 800,
+                landscape: 1000
+            })
+        );
+
+        let cli = parse_cli(&v(&["fast-image-converter", "/tmp/x", "--resize", "none"])).unwrap();
+        assert_eq!(cli.resize, Some(crate::format::ResizePolicy::None));
+    }
+
+    // AC-DE-007-2: the 3-arg shape's `fit=` token followed by a
+    // missing `long-edge=<N>` token surfaces as `BadResize`, not
+    // as a silent fall-through to the legacy parser.
+    #[test]
+    fn parse_cli_fit_missing_long_edge_is_bad_resize() {
+        let err = parse_cli(&v(&[
+            "fast-image-converter",
+            "/tmp/x",
+            "--resize",
+            "fit=contain",
+        ]))
+        .unwrap_err();
+        assert!(
+            matches!(err, CliError::BadResize(ref m) if m.contains("long-edge")),
+            "expected BadResize with long-edge message; got {err:?}"
+        );
+    }
+
+    // AC-DE-007-5: a bogus fit mode surfaces as `BadResize` with
+    // the parser's mode-rejection message (not as Usage).
+    #[test]
+    fn parse_cli_fit_bogus_mode_is_bad_resize() {
+        let err = parse_cli(&v(&[
+            "fast-image-converter",
+            "/tmp/x",
+            "--resize",
+            "fit=bogus",
+            "long-edge=100",
+        ]))
+        .unwrap_err();
+        assert!(
+            matches!(err, CliError::BadResize(ref m) if m.contains("unknown fit mode")),
+            "expected BadResize with unknown-mode message; got {err:?}"
+        );
+    }
+
+    // Round-trip: the JSON `resize_policy` field is produced by
+    // `resize_policy_to_string(ResizePolicy::Fit { ... })`. The
+    // rendered string MUST be parseable back into the same policy
+    // by `parse_resize_fit` so external consumers (Symfony
+    // `BinaryConverter`, Go backend logs) can echo the policy
+    // unchanged. The canonical form is `fit=<mode> long-edge=<N>`
+    // and the mode token's length is fixed (7 chars for
+    // `contain`/`stretch`, 5 for `cover`), so byte slicing is
+    // exact.
+    #[test]
+    fn resize_policy_string_round_trip_for_fit() {
+        use crate::format::{FitMode, ResizePolicy};
+        use crate::params::parse_resize_fit;
+        for (mode, mode_str) in [
+            (FitMode::Contain, "contain"),
+            (FitMode::Cover, "cover"),
+            (FitMode::Stretch, "stretch"),
+        ] {
+            let p = ResizePolicy::Fit {
+                mode,
+                long_edge: 512,
+            };
+            let rendered = resize_policy_to_string(p);
+            assert_eq!(rendered, format!("fit={mode_str} long-edge=512"));
+            // Splice back into the two halves the 3-arg parser
+            // consumes: the mode token (after `fit=`) and the
+            // `long-edge=<N>` token.
+            let mode_token = &rendered[4..4 + mode_str.len()];
+            let long_edge_token = &rendered[4 + mode_str.len() + 1..]; // skip the space
+            let reparsed = parse_resize_fit(mode_token, long_edge_token)
+                .unwrap_or_else(|e| panic!("re-parse failed for {rendered:?}: {e}"));
+            assert_eq!(reparsed, p);
+        }
+    }
+
+    #[test]
+    fn resize_policy_string_round_trip_for_legacy_shapes() {
+        use crate::format::ResizePolicy;
+        let cases = [
+            (ResizePolicy::None, "none"),
+            (ResizePolicy::MaxWidth(1024), "cap=1024"),
+            (
+                ResizePolicy::PortraitLandscape {
+                    portrait: 800,
+                    landscape: 1000,
+                },
+                "auto:portrait=800,landscape=1000",
+            ),
+        ];
+        for (p, expected) in cases {
+            assert_eq!(resize_policy_to_string(p), expected);
+        }
     }
 }
 

@@ -1,5 +1,6 @@
 use std::fmt;
 use std::path::Path;
+use std::str::FromStr;
 
 use crate::params::Params;
 
@@ -79,31 +80,122 @@ pub(crate) fn checked_pixel_capacity(width: u32, height: u32) -> Result<usize, C
 /// Resize policy applied to a decoded image before encoding.
 ///
 /// The v0 baseline is `PortraitLandscape { portrait: 800, landscape: 1000 }`
-/// (see `docs/adr/0002-preserve-jpg-to-webp-baseline.md`).
+/// (see `docs/adr/0002-preserve-jpg-to-webp-baseline.md`). The `Fit`
+/// variant carries DE-007's `--resize fit=<mode> long-edge=<N>`
+/// 3-arg form; `Fit` is a deliberate superset of the older shapes
+/// (it accepts three fit modes that the older shapes cannot express).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ResizePolicy {
     None,
     MaxWidth(u32),
     PortraitLandscape { portrait: u32, landscape: u32 },
+    Fit { mode: FitMode, long_edge: u32 },
+}
+
+/// Fit-mode enum used by the
+/// `--resize fit=<mode> long-edge=<N>` 3-arg form (DE-007).
+///
+/// The three modes map onto the three image-resize semantics the
+/// page-side advanced panel exposes (per the elrise.io side of
+/// DE-031):
+///
+/// - `Contain`: scale the source so the longer side equals
+///   `long_edge`, preserving the aspect ratio. The shorter side
+///   is computed proportionally; nothing is cropped, nothing is
+///   padded. Mirrors CSS `object-fit: contain`.
+/// - `Cover`: scale the source so the shorter side equals
+///   `long_edge`, preserving the aspect ratio, then centre-crop
+///   the longer side to produce an exact `long_edge × long_edge`
+///   output. Mirrors CSS `object-fit: cover`.
+/// - `Stretch`: resize to exactly `long_edge × long_edge`,
+///   ignoring the source aspect ratio. Mirrors CSS
+///   `object-fit: fill`.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum FitMode {
+    Contain,
+    Cover,
+    Stretch,
+}
+
+impl FitMode {
+    /// Lower-case canonical CLI / JSON spelling. Matches the
+    /// `<mode>` token in `--resize fit=<mode> long-edge=<N>` and
+    /// the round-trip JSON `resize_policy` field.
+    pub(crate) fn as_str(self) -> &'static str {
+        match self {
+            FitMode::Contain => "contain",
+            FitMode::Cover => "cover",
+            FitMode::Stretch => "stretch",
+        }
+    }
+}
+
+impl fmt::Display for FitMode {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.write_str(self.as_str())
+    }
+}
+
+impl FromStr for FitMode {
+    type Err = String;
+    fn from_str(s: &str) -> Result<Self, Self::Err> {
+        match s {
+            "contain" => Ok(FitMode::Contain),
+            "cover" => Ok(FitMode::Cover),
+            "stretch" => Ok(FitMode::Stretch),
+            other => Err(format!(
+                "unknown fit mode: {other:?} (expected contain, cover, or stretch)"
+            )),
+        }
+    }
 }
 
 impl ResizePolicy {
-    /// Resolve the target width for an image of the given dimensions.
-    /// `None` policy always returns `width` unchanged.
-    pub fn target_width(&self, width: u32, height: u32) -> u32 {
+    /// Resolve the target pixel dimensions `(width, height)` for an
+    /// image of the given `(width, height)` under this policy.
+    /// Returns the input dimensions unchanged when the policy is
+    /// `None` or when the input is already at or below the cap
+    /// (no upscaling for the legacy shapes; `Fit::Stretch` is the
+    /// exception and always produces a `long_edge × long_edge`
+    /// output).
+    pub fn target_dimensions(&self, width: u32, height: u32) -> (u32, u32) {
         match *self {
-            ResizePolicy::None => width,
-            ResizePolicy::MaxWidth(m) => width.min(m),
+            ResizePolicy::None => (width, height),
+            ResizePolicy::MaxWidth(m) => {
+                if width <= m {
+                    (width, height)
+                } else {
+                    (m, height.saturating_mul(m) / width)
+                }
+            }
             ResizePolicy::PortraitLandscape {
                 portrait,
                 landscape,
             } => {
-                if height >= width {
-                    portrait
+                let cap = if height >= width { portrait } else { landscape };
+                if width <= cap {
+                    (width, height)
                 } else {
-                    landscape
+                    (cap, height.saturating_mul(cap) / width)
                 }
             }
+            ResizePolicy::Fit { mode, long_edge } => match mode {
+                FitMode::Contain => {
+                    if width >= height {
+                        if width <= long_edge {
+                            (width, height)
+                        } else {
+                            (long_edge, height.saturating_mul(long_edge) / width)
+                        }
+                    } else if height <= long_edge {
+                        (width, height)
+                    } else {
+                        (width.saturating_mul(long_edge) / height, long_edge)
+                    }
+                }
+                FitMode::Cover => (long_edge, long_edge),
+                FitMode::Stretch => (long_edge, long_edge),
+            },
         }
     }
 }
@@ -242,14 +334,33 @@ pub struct ConversionReport {
 }
 
 /// Apply the resize policy to a decoded image. Returns the original
-/// image unchanged when the target width equals the current width.
+/// image unchanged when the target dimensions equal the current
+/// dimensions. The legacy shapes (None, MaxWidth, PortraitLandscape)
+/// keep their original "resize-down only" semantics: when the input
+/// is already at or below the cap, no work is done. `Fit` modes
+/// always produce a non-trivial output (Cover crops to
+/// `long_edge × long_edge`; Stretch always resizes to that square;
+/// Contain only resizes when the source is larger than `long_edge`).
 pub(crate) fn apply_resize(img: &image::DynamicImage, policy: ResizePolicy) -> image::DynamicImage {
     let (w, h) = (img.width(), img.height());
-    let target_w = policy.target_width(w, h);
-    if target_w >= w {
+    let (target_w, target_h) = policy.target_dimensions(w, h);
+    if target_w == w && target_h == h {
         return img.clone();
     }
-    img.resize(target_w, u32::MAX, image::imageops::FilterType::Lanczos3)
+    match policy {
+        ResizePolicy::Fit { mode, .. } => match mode {
+            FitMode::Contain => {
+                img.resize(target_w, target_h, image::imageops::FilterType::Lanczos3)
+            }
+            FitMode::Cover => {
+                img.resize_to_fill(target_w, target_h, image::imageops::FilterType::Lanczos3)
+            }
+            FitMode::Stretch => {
+                img.resize_exact(target_w, target_h, image::imageops::FilterType::Lanczos3)
+            }
+        },
+        _ => img.resize(target_w, target_h, image::imageops::FilterType::Lanczos3),
+    }
 }
 
 /// v0 baseline codec: JPEG input -> WebP output with the per-orientation
@@ -833,18 +944,82 @@ mod tests {
     }
 
     #[test]
-    fn resize_policy_target_width_is_correct() {
-        // v0 baseline: portrait >= landscape use portrait, landscape uses landscape.
+    fn resize_policy_target_dimensions_is_correct() {
+        // v0 baseline: portrait uses portrait cap (h >= w), landscape
+        // uses landscape cap (w > h). The refactor unifies width and
+        // height resolution into one call; the legacy shapes keep
+        // their original "resize-down only" semantics: when the input
+        // is already at or below the cap, the target dimensions equal
+        // the input dimensions exactly.
         let p = ResizePolicy::PortraitLandscape {
             portrait: 800,
             landscape: 1000,
         };
-        assert_eq!(p.target_width(640, 960), 800); // portrait
-        assert_eq!(p.target_width(960, 640), 1000); // landscape
-        assert_eq!(p.target_width(800, 800), 800); // square (h >= w)
-        assert_eq!(p.target_width(500, 800), 800); // already smaller -> clamp
-        assert_eq!(p.target_width(1200, 800), 1000); // landscape
-        assert_eq!(p.target_width(800, 1200), 800); // portrait
+        assert_eq!(p.target_dimensions(640, 960), (640, 960)); // already smaller than portrait
+        assert_eq!(p.target_dimensions(960, 640), (960, 640)); // already smaller than landscape
+        assert_eq!(p.target_dimensions(800, 800), (800, 800)); // square (h >= w), at cap
+        assert_eq!(p.target_dimensions(500, 800), (500, 800)); // already smaller
+        assert_eq!(p.target_dimensions(1200, 800), (1000, 666)); // landscape, scaled down
+        assert_eq!(p.target_dimensions(800, 1200), (800, 1200)); // portrait, at cap
+
+        let m = ResizePolicy::MaxWidth(1000);
+        assert_eq!(m.target_dimensions(800, 600), (800, 600)); // already smaller
+        assert_eq!(m.target_dimensions(1200, 800), (1000, 666)); // scaled down
+        assert_eq!(m.target_dimensions(1000, 800), (1000, 800)); // exactly at cap
+
+        let n = ResizePolicy::None;
+        assert_eq!(n.target_dimensions(1920, 1080), (1920, 1080)); // always unchanged
+    }
+
+    #[test]
+    fn fit_contain_target_dimensions_respects_orientation() {
+        let p = ResizePolicy::Fit {
+            mode: FitMode::Contain,
+            long_edge: 512,
+        };
+        // Landscape source (w > h): the long edge IS the width; width
+        // is clamped to `long_edge`, height is proportional.
+        assert_eq!(p.target_dimensions(1200, 800), (512, 341));
+        // Portrait source (h > w): the long edge IS the height;
+        // height is clamped to `long_edge`, width is proportional.
+        assert_eq!(p.target_dimensions(800, 1200), (341, 512));
+        // Square source: both dimensions equal `long_edge`.
+        assert_eq!(p.target_dimensions(1024, 1024), (512, 512));
+        // Source already at or below `long_edge`: no resize.
+        assert_eq!(p.target_dimensions(400, 300), (400, 300));
+        assert_eq!(p.target_dimensions(512, 512), (512, 512));
+    }
+
+    #[test]
+    fn fit_cover_target_dimensions_is_always_square() {
+        // Cover always produces `long_edge × long_edge` regardless of
+        // input orientation; the image is scaled and centre-cropped
+        // in `apply_resize`.
+        let p = ResizePolicy::Fit {
+            mode: FitMode::Cover,
+            long_edge: 512,
+        };
+        assert_eq!(p.target_dimensions(1200, 800), (512, 512));
+        assert_eq!(p.target_dimensions(800, 1200), (512, 512));
+        assert_eq!(p.target_dimensions(400, 300), (512, 512));
+        // Square source equal to long_edge: still 512×512 (Cover
+        // is a no-op in dimensions but the operation is well-defined).
+        assert_eq!(p.target_dimensions(512, 512), (512, 512));
+    }
+
+    #[test]
+    fn fit_stretch_target_dimensions_is_always_square() {
+        // Stretch always resizes to `long_edge × long_edge` even when
+        // the source is smaller than the cap (Stretch is the only
+        // Fit mode that upscales).
+        let p = ResizePolicy::Fit {
+            mode: FitMode::Stretch,
+            long_edge: 512,
+        };
+        assert_eq!(p.target_dimensions(1200, 800), (512, 512));
+        assert_eq!(p.target_dimensions(800, 1200), (512, 512));
+        assert_eq!(p.target_dimensions(400, 300), (512, 512));
+        assert_eq!(p.target_dimensions(512, 512), (512, 512));
     }
 
     // Exact-boundary success and one-byte-over failure for the
