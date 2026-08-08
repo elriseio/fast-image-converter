@@ -128,10 +128,7 @@ fn heic_to_webp_round_trip_matches_golden() {
         .output()
         .expect("spawn binary");
     let stderr = String::from_utf8_lossy(&out.stderr);
-    assert!(
-        out.status.success(),
-        "binary failed; stderr: {stderr}"
-    );
+    assert!(out.status.success(), "binary failed; stderr: {stderr}");
 
     for (golden_name, fixture_name) in decode_inputs() {
         let out_path = run.join(fixture_name.replace(".heic", ".webp"));
@@ -159,10 +156,7 @@ fn heic_to_png_writes_png_magic() {
         .output()
         .expect("spawn binary");
     let stderr = String::from_utf8_lossy(&out.stderr);
-    assert!(
-        out.status.success(),
-        "binary failed; stderr: {stderr}"
-    );
+    assert!(out.status.success(), "binary failed; stderr: {stderr}");
     let produced = fs::read(run.join("portrait_hevc_3mp.png")).expect("output exists");
     let _ = fs::remove_dir_all(&run);
     assert_png_magic(&produced);
@@ -180,10 +174,7 @@ fn heic_to_jpeg_writes_jpeg_magic() {
         .output()
         .expect("spawn binary");
     let stderr = String::from_utf8_lossy(&out.stderr);
-    assert!(
-        out.status.success(),
-        "binary failed; stderr: {stderr}"
-    );
+    assert!(out.status.success(), "binary failed; stderr: {stderr}");
     let produced = fs::read(run.join("portrait_hevc_3mp.jpg")).expect("output exists");
     let _ = fs::remove_dir_all(&run);
     assert_jpeg_magic(&produced);
@@ -244,10 +235,7 @@ fn heif_alias_is_accepted_as_input_format() {
         .output()
         .expect("spawn binary");
     let stderr = String::from_utf8_lossy(&out.stderr);
-    assert!(
-        out.status.success(),
-        "binary failed; stderr: {stderr}"
-    );
+    assert!(out.status.success(), "binary failed; stderr: {stderr}");
     let produced = fs::read(run.join("portrait_hevc_3mp.webp")).expect("output exists");
     let _ = fs::remove_dir_all(&run);
     assert_webp_magic(&produced);
