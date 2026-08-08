@@ -16,16 +16,16 @@ For incident handling and operational triage, see
 ## Executive Summary
 
 - **What it is**: a self-contained CLI for batch and single-file image
-  conversion between `jpg`, `png`, and `webp`.
+  conversion between `jpg`, `png`, `webp`, and `heic` (input).
 - **Why it exists**: the v0 `gallery-compress` pipeline (JPG → WebP
   with the per-orientation resize policy) was repackaged as a generic
   converter without re-spawning a separate tool per format.
 - **State today** (v0.2.0): production baseline landed. Multi-format
-  scope (`jpg`, `png`, `webp`), `keep-source`, `quality` and
-  `resize` flags, `--single-file` mode, `--json` / `--report-fd`
-  structured output, and `GALLERY_BASE` env-only contract all
-  implemented. The repo is in stabilization; see
-  [`docs/architecture/STATUS.md`](docs/architecture/STATUS.md) § 5
+  scope (`jpg`, `png`, `webp` + HEIC input via `libheif-rs`),
+  `keep-source`, `quality` and `resize` flags, `--single-file` mode,
+  `--json` / `--report-fd` structured output, and `GALLERY_BASE`
+  env-only contract all implemented. The repo is in stabilization;
+  see [`docs/architecture/STATUS.md`](docs/architecture/STATUS.md) § 5
   for the gating P0 queue.
 - **Audience**: operators running bulk conversion jobs in shell,
   CI pipelines, or server-side wrappers; contributors extending the
@@ -33,10 +33,10 @@ For incident handling and operational triage, see
 
 ## Supported Conversions
 
-Six pipelines are exposed through the
-`--input-format` / `--output-format` flag pair. All three format
-identifiers (`jpg`, `jpeg`, `png`, `webp`) are accepted
-case-insensitively; `jpg` and `jpeg` are aliases for the same codec.
+Nine pipelines are exposed through the
+`--input-format` / `--output-format` flag pair. Format identifiers
+are accepted case-insensitively; `jpg` and `jpeg` are aliases for
+the same codec, and `heif` is an alias for `heic` (input-only).
 
 | Pipeline | Decoder | Encoder | Quality honoured |
 |---|---|---|---|
@@ -46,12 +46,41 @@ case-insensitively; `jpg` and `jpeg` are aliases for the same codec.
 | `webp` → `jpg` | `image` (`webp` feature) | `image` (`jpeg` feature) | yes |
 | `jpg` → `png` | `image` (`jpeg` feature) | `image` (`png` feature, lossless) | no (lossless) |
 | `png` → `jpg` | `image` (`png` feature) | `image` (`jpeg` feature) | yes |
+| `heic` → `webp` | `libheif-rs` (system `libheif` + `libde265` + `dav1d`) | `webp` crate (lossy VP8) | yes |
+| `heic` → `png` | `libheif-rs` (system `libheif` + `libde265` + `dav1d`) | `image` (`png` feature, lossless) | no (lossless) |
+| `heic` → `jpg` | `libheif-rs` (system `libheif` + `libde265` + `dav1d`) | `mozjpeg` crate (LGPL-2.1+/GPL-2.0+) | yes |
 
 The `image` crate's enabled features are `jpeg`, `png`, and `webp`
 (see [`Cargo.toml`](Cargo.toml)); the `webp` crate is the dedicated
-encoder-only binding to host `libwebp` (see
+encoder-only binding to host `libwebp`, and `mozjpeg` is the
+LGPL/GPL encoder-only binding to host `mozjpeg`. HEIC decoding
+goes through the `libheif-rs` safe wrapper around the system
+`libheif` C library (with the `libde265` HEVC and `dav1d` AV1
+decoder plugins); see
 [`docs/components/format-codecs.md`](docs/components/format-codecs.md)
-for the codec-layer specification).
+for the per-codec specification.
+
+### HEIC input
+
+The CLI accepts `heic` (and the alias `heif`) on the
+`--input-format` side per ADR-0004, and the dispatch in
+`src/main.rs` routes `Heic → Webp`, `Heic → Png`, `Heic → Jpg`
+through `HeicToWebp` / `HeicToPng` / `HeicToJpeg` codec structs
+defined in `src/format.rs`. The decode path goes through
+[`libheif-rs = "2.7"`](https://crates.io/crates/libheif-rs), a safe
+Rust wrapper around the system `libheif` C library (which carries
+the `libde265` HEVC and `dav1d` AV1 decoder plugins). The
+HEIF container's geometric transformations (`irot` / `imir`)
+are honoured automatically; alpha is preserved when the source
+carries an auxiliary alpha image. The JSON report's `input.format`
+emits `"heic"` when the source is HEIC, and `SCHEMA_VERSION`
+is unchanged (additive field per
+[`docs/contracts/report-shape.md`](docs/contracts/report-shape.md) § 7).
+
+HEIC is **input-only**: `--output-format heic` exits `2` with the
+input-only usage banner. The rationale is operational — every
+operator use case targets the existing WebP / PNG / JPEG output
+set; no demand for HEIC output has been expressed.
 
 ## Live Demo
 
@@ -124,10 +153,10 @@ curated operator-facing view.
 | Flag | Type | Default | Meaning |
 |---|---|---|---|
 | `<dir>` | positional | (required in batch mode) | directory containing the input images |
-| `--input-format <fmt>` | enum | `jpg` | `jpg`, `jpeg`, `png`, or `webp` (case-insensitive; `jpg` and `jpeg` are aliases) |
+| `--input-format <fmt>` | enum | `jpg` | `heic`, `heif`, `jpg`, `jpeg`, `png`, or `webp` (case-insensitive; `jpg` and `jpeg` are aliases; `heif` is an alias for `heic`; heic is **input-only**) |
 | `--output-format <fmt>` | enum | `webp` | `jpg`, `jpeg`, `png`, or `webp` (case-insensitive; `jpg` and `jpeg` are aliases) |
 | `--quality <1..100>` | integer | `85` | encoder quality; honoured by WebP and JPEG outputs, ignored by PNG (lossless) |
-| `--resize <policy>` | enum | `auto:portrait=800,landscape=1000` | one of `none`, `cap=<W>`, `auto:portrait=<W>,landscape=<H>`, or **`fit=<mode> long-edge=<N>`** (mode ∈ `contain` \| `cover` \| `stretch`; `<N>` ∈ [1, 20000]). The `fit=<mode> long-edge=<N>` shape is accepted by the binary; the elrise.io page-side advanced panel already wires it (closed `DE-031` in the elrise.io project's issue queue), and `X-Resize-Mode` / `X-Resize-Max-Long-Edge` round-trip end-to-end through the subprocess. |
+| `--resize <policy>` | enum | `auto:portrait=800,landscape=1000` | one of `none`, `cap=<W>`, `auto:portrait=<W>,landscape=<H>`, or **`fit=<mode> long-edge=<N>`** (mode ∈ `contain` \| `cover` \| `stretch`; `<N>` ∈ [1, 20000]). The `fit=<mode> long-edge=<N>` shape is accepted by the binary; the elrise.io page-side advanced panel wires `X-Resize-Mode` / `X-Resize-Max-Long-Edge` end-to-end through the subprocess. |
 | `--keep-source` | flag | `false` | leave the source file in place after a successful conversion; **batch mode only**, silently ignored in `--single-file` |
 | `--single-file`, `-1` | flag | `false` | read one image from stdin, write the encoded image bytes to stdout |
 | `--json` | flag | `false` | emit per-file metadata as a structured NDJSON record (`schema_version: 1`) instead of the v0 key=value line |
@@ -207,8 +236,9 @@ A positional argument that contains a `/` is treated as an absolute
 or relative path and used verbatim (v0 contract preserved). A bare
 argument without a `/` (e.g. `2025`) is joined to `GALLERY_BASE`;
 if `GALLERY_BASE` is unset, the binary prints a usage message and
-exits `2`. This contract was fixed by DE-006 (no host-specific
-fallback path remains in the source tree).
+exits `2`. No host-specific fallback path remains in the source
+tree — the operator must pass an absolute path or set
+`GALLERY_BASE` explicitly.
 
 ## Structured JSON Output
 
@@ -265,6 +295,9 @@ The win comes from eliminating ~100 process spawns (`identify` +
 `magick` per image) and parallelising across cores with `rayon`.
 Output bytes match within 0.1 % of the `libwebp` reference encoder
 (golden-batch regression test, see [Testing](#testing)).
+HEIC decode shares the same single-threaded path as JPG / PNG /
+WebP (one `libheif` decode per file inside a `rayon` worker);
+no separate subprocess spawn per file.
 
 > **Reproducibility note (environment-dependent)**. The numbers
 > above are host-specific. Re-measure on your host with:
@@ -281,23 +314,28 @@ Output bytes match within 0.1 % of the `libwebp` reference encoder
 The release binary size is ~2.4 MiB (stripped) on the reference
 host. **Reproducibility note (environment-dependent)**: rebuild
 locally with `cargo build --release` and inspect
-`ls -lh target/release/fast-image-converter`. Size varies with the
-target triple, the `image` crate's decoder table, and the host
-linker.
+`ls -lh target/release/fast-image-converter`. The HEIC decoder
+(`libheif-rs` wrapper around the system `libheif` C library +
+`libde265` HEVC + `dav1d` AV1 plugins) is loaded dynamically from
+the host, so HEIC input support adds **+0 MiB** to the release
+binary on hosts that already have `libheif` installed. Size
+varies with the target triple, the `image` crate's decoder table,
+and the host linker.
 
 ## Limitations
 
-- **Input formats**: `jpg`, `png`, `webp` only. `gif`, `bmp`,
-  `tiff`, and `avif` are gated on follow-up waves; see
+- **Input formats**: `heic`, `jpg`, `png`, `webp`. HEIC is
+  input-only (see [HEIC input](#heic-input) above for the decode
+  path + input-only rationale). `gif`, `bmp`, `tiff`, and `avif`
+  are gated on follow-up waves; see
   [`docs/ROADMAP.md`](docs/ROADMAP.md) § Wave 2.
 - **Resize fit-mode (contain / cover / stretch)**: the
   `--resize fit=<mode> long-edge=<N>` shape is **accepted** by this
-  CLI today. The elrise.io page-side advanced
-  panel already passes `fit=<mode> long-edge=<N>` to the subprocess
-  (closed `DE-031` in the elrise.io project's issue queue); the
-  subprocess now decodes the three-arg shape and round-trips the
-  policy through the `--json` `codec.resize_policy` field. The
-  upper bound on `<N>` is `20000` (mirrors the Go backend's
+  CLI today; the elrise.io page-side advanced panel wires it to
+  the subprocess via the `X-Resize-Mode` /
+  `X-Resize-Max-Long-Edge` headers and the policy round-trips
+  through the `--json` `codec.resize_policy` field. The upper
+  bound on `<N>` is `20000` (mirrors the Go backend's
   `parseResize` validation).
 - **Animated GIF / APNG**: out of scope; only the first frame is
   processed.
@@ -332,44 +370,19 @@ runtime failures, in summary:
 
 ## Development
 
-### Repository Layout
-
-```
-Cargo.toml                   # workspace manifest (image, webp, rayon, libc, serde_json[dev])
-Cargo.lock                   # pinned dependency graph
-build.rs                     # bakes CONVERT_TO_WEBP_BUILD_COMMIT_SHA + libwebp_version
-src/
-  main.rs                    # argv parser, usage printer, mode dispatcher, batch + single-file loops
-  format.rs                  # Codec trait, ResizePolicy, per-codec impls, Format enum (jpg/jpeg/png/webp)
-  params.rs                  # Params { quality, resize } — defaults to v0 baseline
-  report.rs                  # Report struct, hand-rolled NDJSON encoder (schema_version 1)
-  bin/gallery-compress.rs    # legacy forwarder to fast-image-converter
-tests/
-  golden_v0.rs               # golden-batch regression (10 fixtures; libwebp 1.6.0 golden)
-  single_file.rs             # --single-file mode integration (success, failure, byte-equivalence)
-  json_output.rs             # --json / --report-fd integration (round-trip, parse, fd validation)
-  fixtures/golden_v0/        # 10 JPG fixtures + 10 WebP golden outputs (re-recordable)
-docs/
-  architecture.md            # C4-style architecture overview
-  architecture/STATUS.md     # architect meta-document (goals, trade-offs, gating P0 queue)
-  ROADMAP.md                 # active wave + planned waves
-  RUNBOOK.md                 # operator runbook (triage, build failures, incidents)
-  adr/                       # decision log
-  components/                # per-component contracts (cli-frontend, converter-core, format-codecs)
-  contracts/                 # cross-component contracts (codec-bounds, report-shape)
-  integration-contract.md    # outward-facing consumer contract (server-side callers)
-```
-
 ### Build Variants
 
 ```bash
 cargo build                  # debug build (slower, larger binary)
 cargo build --release        # release build (~2.4 MiB stripped on the reference host)
-cargo test                   # full suite: unit tests + 3 integration suites
+cargo test                   # full suite: unit tests + integration suites
 cargo test --release         # release-mode test run (matches CI)
 cargo test --test golden_v0  # golden-batch only (regression ground truth)
 cargo test --test single_file
 cargo test --test json_output
+cargo test --test mozjpeg
+cargo test --test fit_mode
+cargo test --test alias_forwarding
 ```
 
 ## Testing
@@ -417,23 +430,6 @@ your host's `pkg-config --modversion libwebp`, run
 `cargo test --test golden_v0`, and commit both the golden files
 and the version bump in one commit. The full procedure lives at
 [`tests/fixtures/golden_v0/expected/README.md`](tests/fixtures/golden_v0/expected/README.md).
-
-## Release and Versioning
-
-- **Version anchor**: `Cargo.toml` `version` field (currently
-  `0.2.0`). The CLI flag surface is additive-only within a major
-  version; removing a flag is a breaking change.
-- **`schema_version`**: bumped in
-  [`src/report.rs`](src/report.rs) (`SCHEMA_VERSION`). Bumping the
-  JSON schema is a coordinated breaking change requiring an ADR
-  under [`docs/adr/`](docs/adr/) and a coordinated bump in any
-  external consumer (e.g. the Symfony `BinaryConverter`). See
-  [`docs/contracts/report-shape.md`](docs/contracts/report-shape.md) § 7.
-- **Exit-code contract**: frozen at three codes (`0` / `1` / `2`)
-  for the lifetime of major version `1`.
-- **Release tag**: `git tag v0.2.0` after `cargo build --release`
-  passes and the full suite is green. SHA-pinned builds carry the
-  recorded `host.build_commit_sha` in every JSON record.
 
 ## License
 
