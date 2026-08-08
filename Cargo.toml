@@ -25,9 +25,9 @@ path = "src/main.rs"
 # Deprecated compatibility alias for the v0 product name.
 # Forwards arguments and exit status to the canonical binary and
 # emits a one-line deprecation hint on stderr before invoking it.
-# The forwarder source is `src/bin/fast-image-converter.rs`.
-name = "fast-image-converter"
-path = "src/bin/fast-image-converter.rs"
+# The forwarder source is `src/bin/convert-to-webp.rs`.
+name = "convert-to-webp"
+path = "src/bin/convert-to-webp.rs"
 
 [[bin]]
 # Legacy compatibility alias retained from the bash + ImageMagick
