@@ -64,7 +64,7 @@ thread 'main' panicked at 'called `Result::unwrap()` on an `Err` value: PkgError
 
 Fix:
 
-- Debian / Ubuntu: `sudo apt install libheif-dev libde265-dev dav1d-dev`
+- Debian / Ubuntu: `sudo apt install libheif-dev libde265-dev libdav1d-dev`
 - Arch: `sudo pacman -S libheif dav1d`
 - Homebrew (macOS): `brew install libheif`
 
@@ -185,14 +185,14 @@ required.
 | libwebp     | 1.0+        | `libwebp-dev` (Debian/Ubuntu), `libwebp` (Arch), `webp` (Homebrew) |
 | libheif     | 1.14+       | `libheif-dev` (Debian/Ubuntu, added per DE-040 / ADR-0004), `libheif` (Arch), `libheif` (Homebrew) |
 | libde265    | 1.0+        | `libde265-dev` (Debian/Ubuntu, required for HEVC HEIC decode) |
-| dav1d       | 1.0+        | `dav1d-dev` (Debian/Ubuntu, required for AV1 HEIC decode; bundled by `libheif-sys` on some hosts) |
+| dav1d       | 1.0+        | `libdav1d-dev` (Debian/Ubuntu, required for AV1 HEIC decode; bundled by `libheif-sys` on some hosts) |
 | pkg-config  | any         | system package manager                |
 | C compiler  | any         | `build-essential` / `base-devel` / Xcode CLT |
 | cargo-audit | ^0.22       | install once: `make audit-install`    |
 
 The CI workflow installs the same packages under Ubuntu 24.04
 (`sudo apt-get install -y libwebp-dev libheif-dev libde265-dev
-dav1d-dev pkg-config build-essential`).
+libdav1d-dev pkg-config build-essential`).
 
 ### 7.2 Local Verification Command
 
@@ -224,9 +224,9 @@ every pull request and every push to `master` / `main`:
 1. Checkout.
 2. Install Rust 1.97.0 via `dtolnay/rust-toolchain` (single source
    of truth: `rust-toolchain.toml`).
-3. Install `libwebp-dev`, `libheif-dev`, `libde265-dev`, `dav1d-dev`,
+3. Install `libwebp-dev`, `libheif-dev`, `libde265-dev`, `libdav1d-dev`,
    `pkg-config`, `build-essential` (per DE-040 / ADR-0004; `libheif-dev`
-   + `libde265-dev` + `dav1d-dev` are required for HEIC input).
+   + `libde265-dev` + `libdav1d-dev` are required for HEIC input).
 4. Cache the Cargo registry and `target/` keyed on
    `rust-toolchain.toml` + `Cargo.lock`; cache is **not** keyed on
    PR-supplied content (AR-005 AC-4).
@@ -384,7 +384,7 @@ boundary is byte-compatible with the previous minor release.
 - The workflow reads `rust-toolchain.toml` as the single source
   of toolchain truth; `Cargo.lock` pins the dependency graph;
   the host-system dependency set matches the gate job
-  (`libwebp-dev`, `libheif-dev`, `libde265-dev`, `dav1d-dev`,
+  (`libwebp-dev`, `libheif-dev`, `libde265-dev`, `libdav1d-dev`,
   `pkg-config`, `build-essential`, plus `imagemagick` for the
   smoke-test fixture generation).
 
@@ -394,7 +394,7 @@ The release process reads only tracked files. No
 `Makefile.agent`, no `memory.json`, no `.symposium/`, no `Issues/`,
 no operator-local scratchpads participate. A clean checkout of
 the tagged commit plus a working `rustup` + `libwebp-dev` +
-`libheif-dev` + `libde265-dev` + `dav1d-dev` + `pkg-config` +
+`libheif-dev` + `libde265-dev` + `libdav1d-dev` + `pkg-config` +
 `build-essential` + `imagemagick` is sufficient (AR-008 AC-8).
 
 ## 9. Source Refs

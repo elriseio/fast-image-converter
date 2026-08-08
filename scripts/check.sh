@@ -21,7 +21,7 @@
 #
 # Required host tools: rustup with the pinned toolchain in
 # `rust-toolchain.toml`, libwebp-dev, libheif-dev (>= 1.21),
-# libde265-dev, dav1d-dev, pkg-config, a C toolchain.
+# libde265-dev, libdav1d-dev, pkg-config, a C toolchain.
 
 set -euo pipefail
 
