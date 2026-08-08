@@ -84,7 +84,7 @@ tags: [meta, architect, status, convert-to-webp]
 | Single-file CLI vs library + CLI | CLI only (library API out of scope) | `architecture.md` § 1 Purpose |
 | ImageMagick pipeline vs native libwebp via `image`/`webp` crates | Native (8.5× wall-time win observed in v0 baseline) | `README.md` "Why Rust" |
 | Per-orientation resize policy vs always-uniform policy | Keep v0 per-orientation as the default; allow override | `adr/0002-preserve-jpg-to-webp-baseline.md` |
-| Product identity: `fast-image-converter` vs `fast-image-converter` | Adopt `fast-image-converter` as canonical product and CLI name; retain `fast-image-converter` and `gallery-compress` as compatibility aliases for at least one major version | `adr/0003-fast-image-converter-product-name.md` |
+| Product identity: `fast-image-converter` vs `fast-image-converter` | Adopt `fast-image-converter` as canonical product and CLI name; retain `gallery-compress` as a compatibility alias; the `convert-to-webp` v0 alias was removed per DE-045 | `adr/0003-fast-image-converter-product-name.md` |
 | Hard-coded `DEFAULT_GALLERY_BASE` vs env-only vs CLI-only | Env-only with explicit "must-be-set" error for bare args. Resolved by `DE-006`; no host-specific default remains. | `RUNBOOK.md` § RD-001 |
 | HEIC input-only vs full HEIC encode/decode parity | Input-only: HEIC decoded via `image` crate `heif` feature (statically links `libheif` + `libde265` + `dav1d` via `libheif-sys`); `--output-format heic` exits 2 with usage. Rationale: every operator use case targets the existing WebP / PNG / JPEG output set; no demand for HEIC output has been expressed; the `image` crate does not expose HEIF encoding as of 0.25. Captured as ADR-0004 F-2 future work if demand emerges. | `adr/0004-add-heic-input-support.md` |
 | PDF input delivery (parked, not active) | PDF deferred until HEIC (DE-040) ships + operator explicitly authorises. Library `pdfium-render` (BSD-3-Clause, permissive-only) replaces the `libheif-sys` static-link pattern with the crate's default `static` PDFium bundling (no system-level `libpdfium-dev` required at build time). Combined binary delta ~9-14 MiB vs ~2.4 MiB today after HEIC + PDF. | `adr/0005-add-pdf-input-support-parked.md` |
@@ -140,8 +140,9 @@ tags: [meta, architect, status, convert-to-webp]
   `RUNBOOK.md` § RD-001 (Resolved Defect).
 - The product rename to `fast-image-converter` is accepted by ADR-0003.
   Runtime and release work must land before the documentation sweep;
-  `fast-image-converter` and `gallery-compress` remain compatibility aliases.
-- The operational project slug remains `fast-image-converter` until a separate
+  `gallery-compress` remains the only compatibility alias; the
+  `convert-to-webp` v0 alias was removed entirely per DE-045.
+- The operational project slug remains `convert-to-webp` until a separate
   identity migration is explicitly approved and executed.
 
 ## 8. Source Refs

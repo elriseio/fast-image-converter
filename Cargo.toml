@@ -2,8 +2,9 @@
 # Canonical product and CLI: fast-image-converter. Package metadata
 # must match the canonical identity so downstream tooling
 # (release artifact names, package metadata) sees one stable
-# identity. The legacy names survive as thin forwarder binaries
-# below.
+# identity. The `gallery-compress` legacy name survives as a thin
+# forwarder binary below; the `convert-to-webp` v0 alias was
+# removed per DE-045.
 name = "fast-image-converter"
 version = "0.2.0"
 edition = "2021"
@@ -20,14 +21,6 @@ default-run = "fast-image-converter"
 # hyphens to underscores for these environment variables).
 name = "fast-image-converter"
 path = "src/main.rs"
-
-[[bin]]
-# Deprecated compatibility alias for the v0 product name.
-# Forwards arguments and exit status to the canonical binary and
-# emits a one-line deprecation hint on stderr before invoking it.
-# The forwarder source is `src/bin/convert-to-webp.rs`.
-name = "convert-to-webp"
-path = "src/bin/convert-to-webp.rs"
 
 [[bin]]
 # Legacy compatibility alias retained from the bash + ImageMagick

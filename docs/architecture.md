@@ -154,7 +154,8 @@ For architectural decisions, see `adr/`:
   JPG→WebP pipeline as the default behaviour.
 - `adr/0003-fast-image-converter-product-name.md` — adopts
   `fast-image-converter` as the canonical product and CLI name;
-  legacy aliases retained for at least one major version.
+  the `gallery-compress` legacy alias is retained; the
+  `convert-to-webp` v0 alias was removed per DE-045.
 - `adr/0004-add-heic-input-support.md` — adds HEIC (HEIF
   container) as an input-only format; routes through the
   `image` crate's `heif` feature (which statically links

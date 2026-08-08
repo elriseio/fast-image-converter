@@ -54,9 +54,13 @@ identity migration is required if the operator wants that key changed.
 1. The canonical product and binary name becomes `fast-image-converter`.
 2. The Cargo package name, default binary, release artifact, examples,
    and consumer-facing documentation use `fast-image-converter`.
-3. `fast-image-converter` remains a deprecated compatibility alias for at
-   least one major version and forwards unchanged arguments and exit
-   status to the canonical binary.
+3. ~~`fast-image-converter` remains a deprecated compatibility alias
+   for at least one major version and forwards unchanged arguments
+   and exit status to the canonical binary.~~ **Superseded by
+   DE-045 (2026-08-08): the `convert-to-webp` v0 compatibility
+   alias is removed entirely; only `gallery-compress` survives as a
+   legacy alias.** See `Issues/open/developer/DE-045_remove_legacy_convert_to_webp_alias.md`
+   for the operator directive and rationale.
 4. `gallery-compress` remains a legacy compatibility alias and forwards
    to the canonical binary with a deprecation hint.
 5. JSON, exit-code, stdin/stdout, report-fd, and image-conversion
@@ -90,9 +94,9 @@ identity migration is required if the operator wants that key changed.
 - Compatibility aliases must be tested for argument forwarding, exit
   status, stdout purity, stderr deprecation messaging, and JSON behavior.
 - The release workflow must publish the canonical binary first and list
-  compatibility aliases explicitly.
-- The next major version may remove compatibility aliases only after an
-  operator-approved migration review.
+  the surviving compatibility aliases explicitly.
+- The next major version may remove the remaining compatibility alias
+  only after an operator-approved migration review.
 
 ## Follow-up
 
