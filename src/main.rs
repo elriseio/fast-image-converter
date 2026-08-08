@@ -11,7 +11,8 @@ mod format;
 mod params;
 mod report;
 use format::{
-    CodecImpl, Format, JpegToPng, JpegToWebp, PngToJpeg, PngToWebp, WebpToJpeg, WebpToPng,
+    CodecImpl, Format, HeicToJpeg, HeicToPng, HeicToWebp, JpegToPng, JpegToWebp, PngToJpeg,
+    PngToWebp, WebpToJpeg, WebpToPng,
 };
 use params::{parse_resize, parse_resize_fit};
 
@@ -262,10 +263,11 @@ fn main() -> ExitCode {
         Err(e) => {
             match e {
                 CliError::BadInputFormat(v) => eprintln!(
-                    "{BINARY_NAME}: invalid --input-format: {v} (expected jpg, png, or webp)"
+                    "{BINARY_NAME}: invalid --input-format: {v} (expected heic, jpg, png, or webp)"
                 ),
                 CliError::BadOutputFormat(v) => eprintln!(
-                    "{BINARY_NAME}: invalid --output-format: {v} (expected jpg, png, or webp)"
+                    "{BINARY_NAME}: invalid --output-format: {v} (expected jpg, png, or webp; \
+                     note: heic is input-only)"
                 ),
                 CliError::BadQuality(v) => eprintln!(
                     "{BINARY_NAME}: invalid --quality: {v} (expected integer in 1..100)"
@@ -354,6 +356,24 @@ fn main() -> ExitCode {
         (Format::Webp, Format::Jpg) => CodecImpl::WebpToJpeg(WebpToJpeg),
         (Format::Jpg, Format::Png) => CodecImpl::JpegToPng(JpegToPng),
         (Format::Png, Format::Jpg) => CodecImpl::PngToJpeg(PngToJpeg),
+        (Format::Heic, Format::Webp) => CodecImpl::HeicToWebp(HeicToWebp),
+        (Format::Heic, Format::Png) => CodecImpl::HeicToPng(HeicToPng),
+        (Format::Heic, Format::Jpg) => CodecImpl::HeicToJpeg(HeicToJpeg),
+        (Format::Heic, Format::Heic) => {
+            eprintln!(
+                "{BINARY_NAME}: same input/output format ({input_format:?}) \
+                 is a no-op; refusing to overwrite the source."
+            );
+            return ExitCode::from(2);
+        }
+        (_, Format::Heic) => {
+            eprintln!(
+                "{BINARY_NAME}: heic is an input-only format; \
+                 --output-format heic is not supported (per ADR-0004)."
+            );
+            print_usage();
+            return ExitCode::from(2);
+        }
         (Format::Jpg, Format::Jpg) | (Format::Png, Format::Png) | (Format::Webp, Format::Webp) => {
             eprintln!(
                 "{BINARY_NAME}: same input/output format ({input_format:?}) \
@@ -540,6 +560,49 @@ fn run_single_file(cli: &Cli) -> ExitCode {
         (Format::Webp, Format::Jpg) => CodecImpl::WebpToJpeg(WebpToJpeg),
         (Format::Jpg, Format::Png) => CodecImpl::JpegToPng(JpegToPng),
         (Format::Png, Format::Jpg) => CodecImpl::PngToJpeg(PngToJpeg),
+        (Format::Heic, Format::Webp) => CodecImpl::HeicToWebp(HeicToWebp),
+        (Format::Heic, Format::Png) => CodecImpl::HeicToPng(HeicToPng),
+        (Format::Heic, Format::Jpg) => CodecImpl::HeicToJpeg(HeicToJpeg),
+        (Format::Heic, Format::Heic) => {
+            let params = crate::params::Params::default();
+            let ctx = ReportContext {
+                cli,
+                input_format,
+                output_format,
+                params: &params,
+                duration_ms: 0,
+            };
+            emit_single_file_failure_report(
+                &ctx,
+                0,
+                None,
+                0,
+                None,
+                crate::report::ErrorKind::Io,
+                "same input/output format is a no-op",
+            );
+            return ExitCode::from(2);
+        }
+        (_, Format::Heic) => {
+            let params = crate::params::Params::default();
+            let ctx = ReportContext {
+                cli,
+                input_format,
+                output_format,
+                params: &params,
+                duration_ms: 0,
+            };
+            emit_single_file_failure_report(
+                &ctx,
+                0,
+                None,
+                0,
+                None,
+                crate::report::ErrorKind::Io,
+                "heic is an input-only format; --output-format heic is not supported (per ADR-0004)",
+            );
+            return ExitCode::from(2);
+        }
         (Format::Jpg, Format::Jpg) | (Format::Png, Format::Png) | (Format::Webp, Format::Webp) => {
             let params = crate::params::Params::default();
             let ctx = ReportContext {
@@ -1331,7 +1394,9 @@ fn print_usage() {
          \x20 <dir>                  directory containing the input images (batch mode)\n\
          \n\
          Flags:\n\
-         \x20 --input-format <fmt>   one of: jpg, png, webp (default: jpg)\n\
+         \x20 --input-format <fmt>   one of: heic, jpg, png, webp (default: jpg)\n\
+         \x20                       Note: heic is accepted on the input side only; \
+                                          `--output-format heic` exits 2 with usage.\n\
          \x20 --output-format <fmt>  one of: jpg, png, webp (default: webp)\n\
          \x20 --quality <n>          encode quality in 1..100 (default: 85; honoured by WebP and JPEG outputs)\n\
          \x20 --resize <policy>      'none' | 'cap=<W>' | 'auto:portrait=<W>,landscape=<H>'\n\

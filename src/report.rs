@@ -75,11 +75,14 @@ impl ErrorKind {
 /// from `format::Format` because the JSON shape uses `jpeg` for
 /// the JPG family (matching Symfony's MIME-type expectations),
 /// while the CLI flag accepts both `jpg` and `jpeg` interchangeably.
+/// `Heic` is input-only per ADR-0004; the JSON value is `heic`
+/// (matches the CLI token and the Apple file-extension convention).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ImageFormat {
     Jpeg,
     Png,
     Webp,
+    Heic,
 }
 
 impl ImageFormat {
@@ -88,6 +91,7 @@ impl ImageFormat {
             ImageFormat::Jpeg => "jpeg",
             ImageFormat::Png => "png",
             ImageFormat::Webp => "webp",
+            ImageFormat::Heic => "heic",
         }
     }
 }
@@ -98,6 +102,7 @@ impl From<Format> for ImageFormat {
             Format::Jpg => ImageFormat::Jpeg,
             Format::Png => ImageFormat::Png,
             Format::Webp => ImageFormat::Webp,
+            Format::Heic => ImageFormat::Heic,
         }
     }
 }
