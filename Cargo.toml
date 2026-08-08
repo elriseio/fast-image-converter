@@ -39,8 +39,7 @@ codegen-units = 1
 # documented ~1.6 MB stripped size). `panic = "abort"` eliminates
 # unwinding tables and the `.eh_frame` section, slightly reducing
 # binary size at the cost of a process abort (not a clean error
-# path) on a panic. The release workflow measures the resulting
-# size and the trade-off is documented in RUNBOOK § 8.
+# path) on a panic. Trade-offs are documented in RUNBOOK § 8.1.
 strip = "symbols"
 panic = "abort"
 

@@ -7,7 +7,6 @@
 #
 # Used by:
 #   - .github/workflows/ci.yml (gate job)
-#   - .github/workflows/release.yml (gate + build jobs)
 #   - docs/RUNBOOK.md § 2.4 / § 7.1 (operator-facing local install)
 #
 # The build-from-source path is required because Ubuntu 22.04/24.04 LTS
