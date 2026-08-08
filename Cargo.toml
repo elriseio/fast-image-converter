@@ -73,6 +73,14 @@ mozjpeg = "0.10"
 # listed explicitly here because the binary uses the symbol
 # directly.
 libc = "0.2"
+# `libheif-rs` is the safe Rust wrapper around `libheif-sys`
+# (which links the system libheif C library + libde265 + dav1d
+# plugin decoders). Used by the HeicToWebp / HeicToPng /
+# HeicToJpeg codecs for HEIC input decoding (per ADR-0004 +
+# DE-040). The default `latest` feature selects the system
+# libheif 1.21+ API; our host has libheif 1.23.1 which satisfies
+# this contract.
+libheif-rs = "2.7"
 
 [dev-dependencies]
 # `serde_json` powers `tests/json_output.rs` — the integration

@@ -1,6 +1,9 @@
 use std::fmt;
+use std::io::Cursor;
 use std::path::Path;
 use std::str::FromStr;
+
+use libheif_rs as lh;
 
 use crate::params::Params;
 
@@ -482,6 +485,78 @@ pub(crate) fn apply_resize(img: &image::DynamicImage, policy: ResizePolicy) -> i
     }
 }
 
+/// Decode HEIC / HEIF container bytes into a `DynamicImage`.
+///
+/// Routes through `libheif-rs` (which links the system `libheif`
+/// C library together with the `libde265` HEVC and `dav1d` AV1
+/// decoder plugins per ADR-0004 § Decision § 1). The decode
+/// honours the HEIF container's `irot`/`imir` transformations
+/// (rotation + mirroring) via `LibHeif::decode`'s automatic
+/// geometric-transform pass; alpha is preserved when the source
+/// has an alpha channel.
+///
+/// Returns:
+/// - `image::RgbImage` (RGB8) for sources without alpha;
+/// - `image::RgbaImage` (RGBA8) for sources with alpha.
+///
+/// Errors:
+/// - truncated or corrupt HEIF bytes -> `CodecError::Decode`;
+/// - missing or unavailable HEVC/AV1 plugin on the host -> surfaced
+///   verbatim from `libheif` via `CodecError::Decode`.
+fn decode_heic_bytes(bytes: &[u8]) -> Result<image::DynamicImage, CodecError> {
+    let total = bytes.len() as u64;
+    let cursor = Cursor::new(bytes);
+    let stream_reader = lh::StreamReader::new(cursor, total);
+    let context = lh::HeifContext::read_from_reader(Box::new(stream_reader))
+        .map_err(|e| CodecError::Decode(format!("heif context: {e}")))?;
+    let image_handle = context
+        .primary_image_handle()
+        .map_err(|e| CodecError::Decode(format!("heif primary image handle: {e}")))?;
+    let has_alpha = image_handle.has_alpha_channel();
+    let color_space = if has_alpha {
+        lh::ColorSpace::Rgb(lh::RgbChroma::Rgba)
+    } else {
+        lh::ColorSpace::Rgb(lh::RgbChroma::Rgb)
+    };
+    let lib_heif = lh::LibHeif::new();
+    let img = lib_heif
+        .decode(&image_handle, color_space, None)
+        .map_err(|e| CodecError::Decode(format!("heif decode: {e}")))?;
+    let planes = img.planes();
+    let plane = planes.interleaved.ok_or_else(|| {
+        CodecError::Decode("heif image is not interleaved (planar HEIF not supported)".to_string())
+    })?;
+    let width = plane.width;
+    let height = plane.height;
+    let stride = plane.stride;
+    let bytes_per_pixel = plane.storage_bits_per_pixel / 8;
+    let bytes_per_pixel = bytes_per_pixel as usize;
+    if bytes_per_pixel != 3 && bytes_per_pixel != 4 {
+        return Err(CodecError::Decode(format!(
+            "heif decode produced unexpected channel depth ({bytes_per_pixel} bytes/pixel; \
+             expected 3 or 4)"
+        )));
+    }
+    let row_size = width as usize * bytes_per_pixel;
+    let mut out = vec![0u8; row_size * height as usize];
+    for y in 0..height as usize {
+        let src_row = &plane.data[y * stride..y * stride + row_size];
+        let dst_row = &mut out[y * row_size..(y + 1) * row_size];
+        dst_row.copy_from_slice(src_row);
+    }
+    if has_alpha {
+        Ok(image::DynamicImage::ImageRgba8(
+            image::RgbaImage::from_raw(width, height, out)
+                .ok_or_else(|| CodecError::Decode("heif rgba buffer shape mismatch".to_string()))?,
+        ))
+    } else {
+        Ok(image::DynamicImage::ImageRgb8(
+            image::RgbImage::from_raw(width, height, out)
+                .ok_or_else(|| CodecError::Decode("heif rgb buffer shape mismatch".to_string()))?,
+        ))
+    }
+}
+
 /// v0 baseline codec: JPEG input -> WebP output with the per-orientation
 /// resize policy and quality 85.
 ///
@@ -949,12 +1024,12 @@ impl Codec for HeicToWebp {
     }
 
     fn decode(&self, src: &Path) -> Result<image::DynamicImage, CodecError> {
-        image::ImageReader::open(src)
-            .map_err(|e| CodecError::Decode(e.to_string()))?
-            .with_guessed_format()
-            .map_err(|e| CodecError::Decode(e.to_string()))?
-            .decode()
-            .map_err(|e| CodecError::Decode(e.to_string()))
+        let bytes = std::fs::read(src).map_err(|e| CodecError::Io(e.to_string()))?;
+        decode_heic_bytes(&bytes)
+    }
+
+    fn decode_bytes(&self, bytes: &[u8]) -> Result<image::DynamicImage, CodecError> {
+        decode_heic_bytes(bytes)
     }
 
     fn encode_to_vec(&self, img: &image::DynamicImage, quality: u8) -> Result<Vec<u8>, CodecError> {
@@ -984,8 +1059,9 @@ impl Codec for HeicToWebp {
 
 /// HEIC (HEIF container) input -> PNG output (lossless).
 ///
-/// Decode path is identical to `HeicToWebp` (the `image` crate's
-/// `heif` feature is selected by content sniffing). Encode path
+/// Decode path is identical to `HeicToWebp` (routes through
+/// `libheif-rs` via the shared `decode_heic_bytes` helper; the
+/// source's alpha channel is preserved when present). Encode path
 /// mirrors `WebpToPng` / `JpegToPng`: `image::codecs::png::PngEncoder`
 /// with RGBA8. HEIC supports alpha; the existing `to_rgba8`
 /// plumbing preserves it end-to-end.
@@ -1002,12 +1078,12 @@ impl Codec for HeicToPng {
     }
 
     fn decode(&self, src: &Path) -> Result<image::DynamicImage, CodecError> {
-        image::ImageReader::open(src)
-            .map_err(|e| CodecError::Decode(e.to_string()))?
-            .with_guessed_format()
-            .map_err(|e| CodecError::Decode(e.to_string()))?
-            .decode()
-            .map_err(|e| CodecError::Decode(e.to_string()))
+        let bytes = std::fs::read(src).map_err(|e| CodecError::Io(e.to_string()))?;
+        decode_heic_bytes(&bytes)
+    }
+
+    fn decode_bytes(&self, bytes: &[u8]) -> Result<image::DynamicImage, CodecError> {
+        decode_heic_bytes(bytes)
     }
 
     fn encode_to_vec(
@@ -1042,12 +1118,13 @@ impl Codec for HeicToPng {
 
 /// HEIC (HEIF container) input -> JPEG output via MozJPEG.
 ///
-/// Decode path goes through `image`'s `heif` feature (libheif +
-/// libde265 + dav1d); encode path goes through `mozjpeg` to keep
-/// the elrise.io side's `--optimize-cru` / `--trellis-ac` flags
-/// honoured end-to-end, matching the `WebpToJpeg` / `PngToJpeg`
-/// codecs. HEIC is **input-only** per ADR-0004; the encode side
-/// here always emits JPEG.
+/// Decode path goes through `libheif-rs` via the shared
+/// `decode_heic_bytes` helper (system libheif + libde265 + dav1d);
+/// encode path goes through `mozjpeg` to keep the elrise.io
+/// side's `--optimize-cru` / `--trellis-ac` flags honoured
+/// end-to-end, matching the `WebpToJpeg` / `PngToJpeg` codecs.
+/// HEIC is **input-only** per ADR-0004; the encode side here
+/// always emits JPEG.
 #[derive(Debug, Clone, Copy)]
 pub struct HeicToJpeg;
 
@@ -1061,12 +1138,12 @@ impl Codec for HeicToJpeg {
     }
 
     fn decode(&self, src: &Path) -> Result<image::DynamicImage, CodecError> {
-        image::ImageReader::open(src)
-            .map_err(|e| CodecError::Decode(e.to_string()))?
-            .with_guessed_format()
-            .map_err(|e| CodecError::Decode(e.to_string()))?
-            .decode()
-            .map_err(|e| CodecError::Decode(e.to_string()))
+        let bytes = std::fs::read(src).map_err(|e| CodecError::Io(e.to_string()))?;
+        decode_heic_bytes(&bytes)
+    }
+
+    fn decode_bytes(&self, bytes: &[u8]) -> Result<image::DynamicImage, CodecError> {
+        decode_heic_bytes(bytes)
     }
 
     fn encode_to_vec(&self, img: &image::DynamicImage, quality: u8) -> Result<Vec<u8>, CodecError> {

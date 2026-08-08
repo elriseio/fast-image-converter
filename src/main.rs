@@ -359,13 +359,6 @@ fn main() -> ExitCode {
         (Format::Heic, Format::Webp) => CodecImpl::HeicToWebp(HeicToWebp),
         (Format::Heic, Format::Png) => CodecImpl::HeicToPng(HeicToPng),
         (Format::Heic, Format::Jpg) => CodecImpl::HeicToJpeg(HeicToJpeg),
-        (Format::Heic, Format::Heic) => {
-            eprintln!(
-                "{BINARY_NAME}: same input/output format ({input_format:?}) \
-                 is a no-op; refusing to overwrite the source."
-            );
-            return ExitCode::from(2);
-        }
         (_, Format::Heic) => {
             eprintln!(
                 "{BINARY_NAME}: heic is an input-only format; \
@@ -563,26 +556,6 @@ fn run_single_file(cli: &Cli) -> ExitCode {
         (Format::Heic, Format::Webp) => CodecImpl::HeicToWebp(HeicToWebp),
         (Format::Heic, Format::Png) => CodecImpl::HeicToPng(HeicToPng),
         (Format::Heic, Format::Jpg) => CodecImpl::HeicToJpeg(HeicToJpeg),
-        (Format::Heic, Format::Heic) => {
-            let params = crate::params::Params::default();
-            let ctx = ReportContext {
-                cli,
-                input_format,
-                output_format,
-                params: &params,
-                duration_ms: 0,
-            };
-            emit_single_file_failure_report(
-                &ctx,
-                0,
-                None,
-                0,
-                None,
-                crate::report::ErrorKind::Io,
-                "same input/output format is a no-op",
-            );
-            return ExitCode::from(2);
-        }
         (_, Format::Heic) => {
             let params = crate::params::Params::default();
             let ctx = ReportContext {
