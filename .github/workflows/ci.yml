@@ -33,10 +33,13 @@ jobs:
           toolchain: 1.97.0
           components: rustfmt, clippy
 
-      - name: Install libwebp + build prerequisites
+      - name: Install libwebp + libheif + build prerequisites
         run: |
           sudo apt-get update
-          sudo apt-get install -y libwebp-dev pkg-config build-essential
+          sudo apt-get install -y \
+            libwebp-dev \
+            libheif-dev libde265-dev dav1d-dev \
+            pkg-config build-essential
 
       - name: Cache Cargo registry + build artefacts
         uses: actions/cache@v4

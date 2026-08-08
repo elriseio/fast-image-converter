@@ -383,15 +383,19 @@ boundary is byte-compatible with the previous minor release.
   forwarder), and attaches all artefacts to the GitHub Release.
 - The workflow reads `rust-toolchain.toml` as the single source
   of toolchain truth; `Cargo.lock` pins the dependency graph;
-  `libwebp-dev` is the only host-system dependency.
+  the host-system dependency set matches the gate job
+  (`libwebp-dev`, `libheif-dev`, `libde265-dev`, `dav1d-dev`,
+  `pkg-config`, `build-essential`, plus `imagemagick` for the
+  smoke-test fixture generation).
 
 ### 8.7 Operator-Local File Independence
 
 The release process reads only tracked files. No
 `Makefile.agent`, no `memory.json`, no `.symposium/`, no `Issues/`,
 no operator-local scratchpads participate. A clean checkout of
-the tagged commit plus a working `rustup` + `libwebp-dev` is
-sufficient (AR-008 AC-8).
+the tagged commit plus a working `rustup` + `libwebp-dev` +
+`libheif-dev` + `libde265-dev` + `dav1d-dev` + `pkg-config` +
+`build-essential` + `imagemagick` is sufficient (AR-008 AC-8).
 
 ## 9. Source Refs
 
