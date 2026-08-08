@@ -16,6 +16,12 @@ concurrency:
 env:
   CARGO_TERM_COLOR: always
   RUSTFLAGS: -D warnings
+  # DE-044: libheif-sys requires libheif >= 1.21. Ubuntu 24.04 ships
+  # libheif 1.17.x; `scripts/install_libheif.sh` rebuilds it from source
+  # into /usr/local. The /usr/local prefix is searched first via this
+  # PKG_CONFIG_PATH so the rebuilt libheif.pc wins over any leftover
+  # system one.
+  PKG_CONFIG_PATH: /usr/local/lib/pkgconfig:/usr/local/share/pkgconfig
 
 jobs:
   gate:
@@ -34,13 +40,20 @@ jobs:
           toolchain: 1.97.0
           components: rustfmt, clippy
 
-      - name: Install libwebp + libheif + build prerequisites
+      - name: Install build prerequisites (libwebp + libheif codecs, but NOT libheif-dev)
         run: |
+          # DE-044: the apt libheif-dev on Ubuntu 24.04 is 1.17.x, below
+          # libheif-sys' >= 1.21 floor. We install the codec dependencies
+          # (libde265-dev, libdav1d-dev) and let `install_libheif.sh`
+          # rebuild libheif itself from source into /usr/local.
           sudo apt-get update
           sudo apt-get install -y \
             libwebp-dev \
-            libheif-dev libde265-dev libdav1d-dev \
+            libde265-dev libdav1d-dev \
             pkg-config build-essential
+
+      - name: Install libheif >= 1.21 (rebuild from source if system is older)
+        run: sudo scripts/install_libheif.sh --yes
 
       - name: Cache Cargo registry + build artefacts
         uses: actions/cache@v4
@@ -95,13 +108,20 @@ jobs:
           toolchain: 1.97.0
           components: rustfmt, clippy
 
-      - name: Install libwebp + libheif + build prerequisites
+      - name: Install build prerequisites (libwebp + libheif codecs + imagemagick, but NOT libheif-dev)
         run: |
+          # DE-044: the apt libheif-dev on Ubuntu 24.04 is 1.17.x, below
+          # libheif-sys' >= 1.21 floor. We install the codec dependencies
+          # (libde265-dev, libdav1d-dev) and let `install_libheif.sh`
+          # rebuild libheif itself from source into /usr/local.
           sudo apt-get update
           sudo apt-get install -y \
             libwebp-dev \
-            libheif-dev libde265-dev libdav1d-dev \
+            libde265-dev libdav1d-dev \
             pkg-config build-essential imagemagick
+
+      - name: Install libheif >= 1.21 (rebuild from source if system is older)
+        run: sudo scripts/install_libheif.sh --yes
 
       - name: Cache Cargo registry + build artefacts
         uses: actions/cache@v4

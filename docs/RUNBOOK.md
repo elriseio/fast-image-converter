@@ -62,11 +62,28 @@ error: failed to run custom build command for `libheif-sys`
 thread 'main' panicked at 'called `Result::unwrap()` on an `Err` value: PkgError(EnvError("pkg-config: libheif not found"))'
 ```
 
+Or, when a system libheif is found but is too old:
+
+```
+The system_deps dependency libheif v1_21 requires libheif >= 1.21
+but the system package provides 1.17.6; please upgrade or rebuild.
+```
+
 Fix:
 
-- Debian / Ubuntu: `sudo apt install libheif-dev libde265-dev libdav1d-dev`
-- Arch: `sudo pacman -S libheif dav1d`
-- Homebrew (macOS): `brew install libheif`
+- Debian / Ubuntu (libheif >= 1.21 available): `sudo apt install libheif-dev libde265-dev libdav1d-dev`
+- Debian / Ubuntu (libheif 1.17.x in apt, the common case on Ubuntu 22.04 / 24.04 LTS and Debian 12, addressed by DE-044):
+  install the codec dependencies and rebuild libheif from source via the
+  repository's helper:
+  ```
+  sudo apt install libde265-dev libdav1d-dev
+  sudo scripts/install_libheif.sh --yes
+  export PKG_CONFIG_PATH=/usr/local/lib/pkgconfig:/usr/local/share/pkgconfig:${PKG_CONFIG_PATH}
+  ```
+  The script is a no-op when the system libheif already satisfies the
+  floor, so it is safe to run unconditionally in CI / local dev alike.
+- Arch: `sudo pacman -S libheif dav1d` (rolling distros ship libheif >= 1.21)
+- Homebrew (macOS): `brew install libheif` (Homebrew ships libheif >= 1.21)
 
 Re-run `cargo build --release` after install. HEIC input
 support goes through the `libheif-rs` safe wrapper around
@@ -74,6 +91,11 @@ support goes through the `libheif-rs` safe wrapper around
 together with the `libde265` HEVC decoder and `dav1d` AV1
 decoder plugins; all three are required to cover the
 iOS 11..16 (HEVC) and iOS 17+ (AV1) HEIC file populations.
+
+The `libheif-sys` crate (via `libheif-rs` 2.7, transitively pulled by the
+`image` crate's `heif` feature) requires a libheif API at or above 1.21
+(`v1_21` system_deps floor in libheif-sys 5.x). Anything below triggers
+`system_deps` to refuse to compile the binding.
 
 **License / patent notes**:
 
@@ -183,16 +205,22 @@ required.
 | rustup      | 1.28+       | <https://rustup.rs>                   |
 | Rust        | 1.97.0      | pinned in `rust-toolchain.toml`       |
 | libwebp     | 1.0+        | `libwebp-dev` (Debian/Ubuntu), `libwebp` (Arch), `webp` (Homebrew) |
-| libheif     | 1.14+       | `libheif-dev` (Debian/Ubuntu, added per DE-040 / ADR-0004), `libheif` (Arch), `libheif` (Homebrew) |
+| libheif     | 1.21+       | `libheif-dev` (Debian/Ubuntu when >= 1.21 is in apt; otherwise `scripts/install_libheif.sh --yes` rebuilds from source per DE-044), `libheif` (Arch), `libheif` (Homebrew) |
 | libde265    | 1.0+        | `libde265-dev` (Debian/Ubuntu, required for HEVC HEIC decode) |
 | dav1d       | 1.0+        | `libdav1d-dev` (Debian/Ubuntu, required for AV1 HEIC decode; bundled by `libheif-sys` on some hosts) |
 | pkg-config  | any         | system package manager                |
 | C compiler  | any         | `build-essential` / `base-devel` / Xcode CLT |
+| CMake       | 3.16+       | `cmake` (Debian/Ubuntu, Arch), `cmake` (Homebrew) — required only by `scripts/install_libheif.sh` |
 | cargo-audit | ^0.22       | install once: `make audit-install`    |
 
-The CI workflow installs the same packages under Ubuntu 24.04
-(`sudo apt-get install -y libwebp-dev libheif-dev libde265-dev
-libdav1d-dev pkg-config build-essential`).
+The CI workflow installs the codec dependencies under Ubuntu 24.04
+(`sudo apt-get install -y libwebp-dev libde265-dev libdav1d-dev
+pkg-config build-essential`) and then runs
+`sudo scripts/install_libheif.sh --yes`, which detects that the
+apt `libheif-dev` is 1.17.x (below the 1.21 floor mandated by
+`libheif-sys` 5.x) and rebuilds libheif 1.21.2 from source into
+`/usr/local`. The `PKG_CONFIG_PATH` for the workflow is set so the
+rebuilt `libheif.pc` is found before any system one.
 
 ### 7.2 Local Verification Command
 
@@ -224,9 +252,13 @@ every pull request and every push to `master` / `main`:
 1. Checkout.
 2. Install Rust 1.97.0 via `dtolnay/rust-toolchain` (single source
    of truth: `rust-toolchain.toml`).
-3. Install `libwebp-dev`, `libheif-dev`, `libde265-dev`, `libdav1d-dev`,
-   `pkg-config`, `build-essential` (per DE-040 / ADR-0004; `libheif-dev`
-   + `libde265-dev` + `libdav1d-dev` are required for HEIC input).
+3. Install `libwebp-dev`, `libde265-dev`, `libdav1d-dev`, `pkg-config`,
+   `build-essential`, and run `sudo scripts/install_libheif.sh --yes`
+   (per DE-040 / ADR-0004 / DE-044; the apt `libheif-dev` on Ubuntu 22.04
+   / 24.04 LTS and Debian 12 is 1.17.x, which is below the 1.21 floor
+   mandated by `libheif-sys`, so the script rebuilds libheif 1.21.2
+   from source into `/usr/local`). The `libde265-dev` + `libdav1d-dev`
+   packages are required for HEIC input decoding.
 4. Cache the Cargo registry and `target/` keyed on
    `rust-toolchain.toml` + `Cargo.lock`; cache is **not** keyed on
    PR-supplied content (AR-005 AC-4).
@@ -384,9 +416,10 @@ boundary is byte-compatible with the previous minor release.
 - The workflow reads `rust-toolchain.toml` as the single source
   of toolchain truth; `Cargo.lock` pins the dependency graph;
   the host-system dependency set matches the gate job
-  (`libwebp-dev`, `libheif-dev`, `libde265-dev`, `libdav1d-dev`,
-  `pkg-config`, `build-essential`, plus `imagemagick` for the
-  smoke-test fixture generation).
+  (`libwebp-dev`, `libde265-dev`, `libdav1d-dev`, `pkg-config`,
+  `build-essential`, plus `imagemagick` for the smoke-test
+  fixture generation) plus `scripts/install_libheif.sh` to
+  provide libheif >= 1.21 (DE-044).
 
 ### 8.7 Operator-Local File Independence
 
@@ -394,8 +427,11 @@ The release process reads only tracked files. No
 `Makefile.agent`, no `memory.json`, no `.symposium/`, no `Issues/`,
 no operator-local scratchpads participate. A clean checkout of
 the tagged commit plus a working `rustup` + `libwebp-dev` +
-`libheif-dev` + `libde265-dev` + `libdav1d-dev` + `pkg-config` +
-`build-essential` + `imagemagick` is sufficient (AR-008 AC-8).
+`libde265-dev` + `libdav1d-dev` + `pkg-config` +
+`build-essential` + `imagemagick` + the helper
+`scripts/install_libheif.sh` (which rebuilds libheif 1.21.2
+  from source into `/usr/local` when apt cannot provide it) is
+sufficient (AR-008 AC-8).
 
 ## 9. Source Refs
 

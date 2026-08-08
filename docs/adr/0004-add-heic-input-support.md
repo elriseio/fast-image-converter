@@ -85,14 +85,26 @@ the following technical commitments:
    decoder) — both plugins are required to cover the iOS 11..16
    (HEVC) and iOS 17+ (AV1) file populations.
 
-2. **Build-time system dependency**: `libheif` 1.14+ development
+2. **Build-time system dependency**: `libheif` 1.21+ development
    headers are required at build time when the `heif` feature is
-   enabled. On Debian / Ubuntu:
-   `sudo apt install libheif-dev libde265-dev dav1d-dev`. On
-   Arch: `sudo pacman -S libheif`. On macOS via Homebrew:
-   `brew install libheif`. The system `pkg-config` must find
-   `libheif`; the existing `build.rs` for `image` / `webp` already
-   establishes the `pkg-config` toolchain.
+   enabled. The floor is set by `libheif-sys` 5.x (pulled in
+   transitively via `libheif-rs` 2.7 + `image::heif`): its
+   `system_deps` table declares `v1_17..v1_23` floors at the
+   matching versions, and the `latest` feature (default in
+   `Cargo.lock`) activates `v1_23`, so anything below 1.21 fails
+   the binding build with `requires libheif >= 1.21` before
+   touching the rest of the build graph. On Debian / Ubuntu when
+   apt ships a recent enough `libheif-dev`:
+   `sudo apt install libheif-dev libde265-dev libdav1d-dev`. On
+   Debian / Ubuntu when apt only has 1.17.x / 1.18.x (the common
+   case on Ubuntu 22.04 / 24.04 LTS and Debian 12 — the failure
+   surface that motivated DE-044): install only the codec
+   dependencies and rebuild libheif from source via the repo
+   helper, `sudo scripts/install_libheif.sh --yes`. On
+   Arch: `sudo pacman -S libheif` (rolling distros ship 1.21+).
+   On macOS via Homebrew: `brew install libheif`. The system
+   `pkg-config` must find `libheif`; the existing `build.rs` for
+   `image` / `webp` already establishes the `pkg-config` toolchain.
 
 3. **Codec integration**: implement three new codecs in `src/format.rs`
    — `HeicToWebp`, `HeicToPng`, `HeicToJpeg` — following the
@@ -258,9 +270,14 @@ copyleft contamination of the application code.
 ## Follow-up
 
 - `Issues/open/architect/AR-003_add_heic_input_support.md` —
-  driver proposal (this ADR's origin).
+  driver proposal.
 - `Issues/open/developer/DE-040_add_heic_input_codec.md` —
   implementation task with acceptance criteria + commit sequence.
+- `Issues/open/developer/DE-044_upgrade_libheif_build_requirement.md`
+  — supply-side fix that ensures the libheif >= 1.21 floor is
+  satisfied on distros whose apt only ships 1.17.x / 1.18.x.
+  Provides `scripts/install_libheif.sh` and the CI workflow
+  wiring.
 - `docs/components/format-codecs.md` § 6.4 — new per-codec spec.
 - `docs/architecture.md` § 6 — External Dependencies row for
   `libheif`.
@@ -269,6 +286,11 @@ copyleft contamination of the application code.
 - `docs/ROADMAP.md` — Wave 2 update for HEIC delivery.
 - `docs/RUNBOOK.md` § Build-time failures — operator note for
   `libheif-dev` install + license / patent notes.
+- `Issues/open/developer/DE-044_upgrade_libheif_build_requirement.md`
+  — supply-side fix that ensures the libheif >= 1.21 floor is
+  satisfied on distros whose apt only ships 1.17.x / 1.18.x.
+  Provides `scripts/install_libheif.sh` and the CI workflow
+  wiring.
 
 ## F-1 — Future work (out of scope)
 
