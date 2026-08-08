@@ -46,8 +46,8 @@ error (exit `2`).
 
 | Flag | Type | Applies to | Default |
 |---|---|---|---|
-| `--input-format <fmt>` | enum (`jpg` \| `png` \| `webp`, Wave 1) | both modes | inferred from extension (batch) or content sniffing (single-file) |
-| `--output-format <fmt>` | enum (`jpg` \| `png` \| `webp`, Wave 1) | both modes | `webp` |
+| `--input-format <fmt>` | enum (`heic` \| `jpg` \| `jpeg` \| `png` \| `webp`; `heif` accepted as alias for `heic`; added per DE-040 / ADR-0004) | both modes | inferred from extension (batch) or content sniffing (single-file) |
+| `--output-format <fmt>` | enum (`jpg` \| `jpeg` \| `png` \| `webp`; `heic` rejected with exit 2; added per DE-040 / ADR-0004) | both modes | `webp` |
 | `--quality <1..100>` | integer | both modes | `85` |
 | `--resize <policy>` | enum (`none` \| `cap=<W>` \| `auto:portrait=<W>,landscape=<H>` \| `fit=<mode> long-edge=<N>`) | both modes | `auto:portrait=800,landscape=1000` (v0 baseline) |
 | `--keep-source` | boolean flag | batch mode only | `false` (source removed on success) |
@@ -138,8 +138,8 @@ a fourth code is a breaking change.
     "schema_version": 1,
     "mode": "single_file" | "batch",
     "status": "ok" | "err",
-    "input":  { "format": "...", "bytes": N, "width": W, "height": H },
-    "output": { "format": "...", "bytes": N, "width": W, "height": H },
+    "input":  { "format": "heic|jpeg|png|webp", "bytes": N, "width": W, "height": H },
+    "output": { "format": "jpeg|png|webp", "bytes": N, "width": W, "height": H },
     "codec":  { "quality": N, "resize_policy": "..." },
     "host":   { "libwebp_version": "...", "build_commit_sha": "..." },
     "duration_ms": N,
@@ -230,12 +230,18 @@ is for log emission only.
 
 - `docs/components/cli-frontend.md` — per-component contract.
 - `docs/components/converter-core.md` — orchestration contract.
-- `docs/components/format-codecs.md` — codec surface.
+- `docs/components/format-codecs.md` — codec surface (HEIC
+  input-only family per § 6.4 / DE-040 / ADR-0004).
 - `docs/contracts/codec-bounds.md` — codec ↔ converter-core
   contract.
 - `docs/contracts/report-shape.md` — `--json` wire shape.
 - `docs/ROADMAP.md` — wave plan for the flag surface and
-  `--json` shape.
+  `--json` shape (HEIC input under Wave 2.1).
 - `docs/adr/0002-preserve-jpg-to-webp-baseline.md` — fidelity
   contract.
+- `docs/adr/0004-add-heic-input-support.md` — HEIC input-only
+  decision.
+- `Issues/open/developer/DE-040_add_heic_input_codec.md` —
+  implementation task that adds `heic` to `--input-format` and
+  extends the JSON `input.format` enum.
 - `docs/RUNBOOK.md` — incident handling.

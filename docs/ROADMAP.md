@@ -74,6 +74,126 @@ is intentionally unchanged and requires a separate identity migration.
   `libavif` availability; gated on operator environment check).
 - Per-format quality presets surfaced via `--quality <n>` flag.
 
+### Wave 2.1 — HEIC input (active; DE-040 / ADR-0004)
+
+**Goal**: add HEIC (HEIF container) as an input format so the
+converter accepts the dominant still-image format on Apple
+devices (iOS 11..16 HEVC; iOS 17+ AV1).
+
+**Driver issue**:
+`Issues/open/architect/AR-003_add_heic_input_support.md`
+(proposal) + `Issues/open/developer/DE-040_add_heic_input_codec.md`
+(implementation task).
+
+**Sub-tasks** (decomposed for developer):
+
+| Sub-task | Owner | Status |
+|---|---|---|
+| 2.1.1 Enable `heif` feature on the `image` crate | developer | queued |
+| 2.1.2 Implement `HeicToWebp` / `HeicToPng` / `HeicToJpeg` codecs | developer | queued |
+| 2.1.3 Wire `--input-format heic` into the CLI parser; reject `--output-format heic` | developer | queued |
+| 2.1.4 Extend `report::ImageFormat` with `Heic` variant (JSON `"heic"`) | developer | queued |
+| 2.1.5 HEIC fixtures + `tests/heic.rs` integration suite | developer | queued |
+| 2.1.6 Update README, integration-contract, RUNBOOK, format-codecs § 6.4 | developer (with lamport for operator-facing copy) | queued |
+| 2.1.7 `make ci` green; binary-size delta recorded in PR | developer + tester | queued |
+
+**Cross-cutting tracks touched**:
+
+- `output_fidelity` — HEIC decoder fidelity (HEVC + AV1 dual-plugin).
+- `regression_risk` — v0 default pipeline (jpg→webp) remains
+  byte-equivalent; HEIC is additive.
+- `build_health` — new build-time system dep `libheif-dev`;
+  CI workflow update; ~1.5-2.5 MiB binary-size delta; ~60-90 s
+  clean-build duration delta.
+
+**Out of Wave 2.1 scope**: HEIC output (encoder); HEIC
+multi-image containers (Live Photos, depth variants); HEIC
+depth-metadata preservation; opt-in Cargo feature (`heic-input`
+default off). Captured as ADR-0004 F-1 + F-2 future-work items.
+
+**Why HEIC is delivered ahead of GIF / BMP / AVIF / JXL**: the
+`libheif`-based build-time approach (R1..R3 in ADR-0004) is the
+first time this project statically links a third-party C library
+beyond `libwebp`. Delivering HEIC first lets the operator
+validate the build-time + binary-size + license model before
+committing to the broader format-coverage wave.
+
+### Wave 2.2 — PDF input (parked; AR-004 / ADR-0005)
+
+**Goal** (when activated): add PDF (Portable Document Format,
+ISO 32000) as an input format so the converter accepts the
+dominant document container for scanned-page archives, reports,
+and ebooks. Renders every page of the PDF to the chosen output
+format.
+
+**Status**: **parked** (2026-08-08). Architectural analysis
+captured in `docs/adr/0005-add-pdf-input-support-parked.md`
+and the parking record `Issues/open/architect/AR-004_park_pdf_input_support.md`.
+No implementation work scheduled in the current wave plan.
+
+**Activation criteria** (all must hold):
+
+1. The HEIC (DE-040 / ADR-0004) wave has shipped and the
+   `libheif` build-time approach has been validated
+   end-to-end on the operator's production deployment.
+2. The operator has explicitly authorised PDF activation in
+   chat ("add PDF input" or equivalent), not just a soft ask.
+3. The broader Wave 2 (GIF / BMP / AVIF / JXL — AR-017
+   placeholder) has not yet started, OR has completed
+   without scope for PDF.
+
+**Captured decisions** (parked; full detail in ADR-0005):
+
+- **Library**: `pdfium-render` (PDFium / BSD-3-Clause).
+  Static bundling via the crate's default `static` feature;
+  no system-level `libpdfium-dev` required at build time.
+  Alternatives (poppler GPL-2, mupdf AGPL-3) rejected on
+  license grounds.
+- **Page semantics**: all pages by default; `--first-page`
+  opt-in flag; `--pages <spec>` (comma-separated list +
+  ranges) optional; 999-page hard cap per PDF.
+- **DPI**: `--pdf-dpi <N>` flag with default `150`, range
+  `[72, 600]`.
+- **Output naming**: `<input_stem>-<NNN>.<ext>` where `NNN`
+  is the zero-padded page number (3 digits ≤ 99; 4 digits
+  ≤ 999; 5 digits above).
+- **JSON shape**: one NDJSON record per page (not one per
+  PDF). `input.path` is the PDF, `output.path` is the
+  per-page image. `input.format = "pdf"`. `schema_version`
+  does not bump (additive shape).
+- **Single-file mode**: `--single-file --input-format pdf`
+  outputs a zip archive on stdout (one image per page).
+  New `zip` crate dependency added at activation.
+- **Source removal**: source PDF removed only after all
+  pages encode and write successfully (mirrors v0
+  all-or-nothing semantics).
+- **Scope cap**: PDF input-only; PDF output (image → PDF)
+  out of scope.
+
+**Risks (when activated)**: R1 binary-size delta ~5-10 MiB
+(combined with HEIC: ~9-14 MiB total); R2 PDFium first-build
+download (~30-40 MiB); R3 multi-page JSON stream length;
+R4 DPI-driven memory at 300 DPI (~35 MiB per A4 page);
+R5 encrypted PDFs out of scope v1; R6 vector graphics
+flattened to bitmaps.
+
+**Why parked (not active)**:
+
+- **Scope management**: HEIC delivery exercises the
+  build-time + binary-size + license model for a third-
+  party C dependency first; PDF adds another 5-10 MiB on
+  top.
+- **Validation opportunity**: lessons from HEIC's
+  `libheif-sys` static link inform PDFium bundling at
+  activation.
+- **Soft ask**: 2026-08-08 chat "может добавить" is a soft
+  ask, not an authorisation to schedule. Activation
+  requires an explicit operator "now".
+
+**Cross-cutting tracks touched (when activated)**:
+`output_fidelity`, `regression_risk`, `build_health` (PDFium
+static bundling).
+
 ### Wave 3 — Resize policy generalisation
 
 - Replace the v0 per-orientation hard policy with a `--resize`
@@ -110,4 +230,10 @@ will append here as waves close._
 - `architecture/STATUS.md` — meta-document + captured trade-offs.
 - `adr/0001-multi-format-cli-scope.md` — scope decision.
 - `adr/0002-preserve-jpg-to-webp-baseline.md` — backward-compat decision.
-- `Issues/open/architect/AR-001_initiate_multi_format_cli.md` — driver proposal.
+- `adr/0003-fast-image-converter-product-name.md` — product rename decision.
+- `adr/0004-add-heic-input-support.md` — HEIC input-only decision.
+- `adr/0005-add-pdf-input-support-parked.md` — PDF input parked decision (Wave 2.2 parking).
+- `Issues/open/architect/AR-003_add_heic_input_support.md` — HEIC input proposal (Wave 2.1 driver).
+- `Issues/open/developer/DE-040_add_heic_input_codec.md` — HEIC input implementation task (Wave 2.1).
+- `Issues/open/architect/AR-004_park_pdf_input_support.md` — PDF input parking record (Wave 2.2 driver).
+- `Issues/open/architect/AR-001_initiate_multi_format_cli.md` — driver proposal (Wave 1).

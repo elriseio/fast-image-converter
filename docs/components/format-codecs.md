@@ -1,14 +1,18 @@
 ---
-project_slug: fast-image-converter
+project_slug: convert-to-webp
 doc_slug: component_format_codecs
 doc_type: component_doc
 applicable_roles: [architect, developer]
-version: 1
+version: 2
 source_artifacts:
   - src/main.rs:11-15, 101-136
-  - Cargo.toml (dependency declaration)
-summary: "Format codecs component: per-format decode/encode/resize policy. Wave 1 surfaces the Codec trait with jpg/png/webp implementations."
-tags: [component, codecs, jpeg, png, webp, image-crate]
+  - src/format.rs (Codec trait, Format enum, CodecImpl dispatch; extension point for new formats)
+  - Cargo.toml (image crate features; heif extension site per ADR-0004)
+  - docs/adr/0004-add-heic-input-support.md (HEIC input-only decision)
+  - Issues/open/architect/AR-003_add_heic_input_support.md (driver proposal)
+  - Issues/open/developer/DE-040_add_heic_input_codec.md (implementation task)
+summary: "Format codecs component: per-format decode/encode/resize policy. Wave 1 surfaces the Codec trait with jpg/png/webp implementations; Wave 2 adds HEIC input via libheif (ADR-0004, DE-040)."
+tags: [component, codecs, jpeg, png, webp, heic, image-crate, libheif]
 ---
 
 # Component: `format-codecs`
@@ -105,6 +109,64 @@ enum ResizePolicy {
   `image::codecs::jpeg::JpegEncoder`. PNG is lossless; JPEG uses
   the same `quality` value mapped to the JPEG `[1, 100]` scale.
 
+### 6.4 `heic → webp` / `heic → png` / `heic → jpg` (Wave 2, DE-040)
+
+- Scope: **input-only**. The `--output-format heic` invocation
+  exits 2 with usage. HEIC is not a supported output format. The
+  rationale is operational: every operator use case (Apple device
+  photo ingestion, mixed-batch ingestion, server-side webhook
+  upload) targets the existing WebP / PNG / JPEG output set; no
+  demand for HEIC output has been expressed. Captured as
+  ADR-0004 § Decision § 6; future ADR if demand emerges.
+- Accepted extensions: `["heic"]`. The `.heif` extension is
+  rejected at the file-extension match to keep the operator's
+  mental model consistent with Apple convention (Apple devices
+  emit `.heic`, not `.heif`; the `.heif` extension is reserved
+  for raw HEIF container use). The CLI flag `--input-format heif`
+  is accepted as an alias for `--input-format heic`.
+- Decode: `image::ImageReader::open(...).with_guessed_format()?.decode()?`
+  — the `image` crate's `heif` feature (enabled in `Cargo.toml`
+  via `image = { features = ["jpeg", "png", "webp", "heif"] }`)
+  transparently dispatches `.heic` files to `libheif` (via
+  `libheif-sys`), which carries `libde265` for HEVC decoding and
+  `dav1d` for AV1 decoding. Both inner codecs are required to
+  cover the iOS 11..16 (HEVC) and iOS 17+ (AV1) file populations.
+- Resize: same `PortraitLandscape` policy as the existing codecs
+  (`auto:portrait=800,landscape=1000` by default; overridable via
+  `--resize`).
+- Encode: re-uses the existing output encoders unchanged — WebP
+  through `webp::Encoder::from_rgb` (or `from_rgba` for sources
+  with alpha), PNG through `image::codecs::png::PngEncoder`,
+  JPEG through `encode_jpeg_mozjpeg` (MozJPEG). HEIC is on the
+  input side only; the encode side is the existing plumbing.
+- Alpha: HEIC supports alpha (the HEIF container carries alpha
+  in a separate auxiliary image; `libheif` recombines them on
+  decode). The existing `to_rgb8` / `to_rgba8` plumbing in the
+  encoder path handles the alpha correctly per output format
+  (WebP and PNG preserve alpha; JPEG drops it via `to_rgb8`).
+- Build-time dependency: `libheif` 1.14+ development headers
+  must be present at compile time when the `heif` feature is
+  enabled. On Debian / Ubuntu: `sudo apt install libheif-dev
+  libde265-dev dav1d-dev`. On Arch: `sudo pacman -S libheif`.
+  On macOS via Homebrew: `brew install libheif`. The
+  `pkg-config` toolchain must find `libheif`; the existing
+  build.rs for `image` / `webp` already establishes that
+  toolchain. Documented in `docs/RUNBOOK.md` § 2.4 (operator
+  note).
+- Multi-image containers: HEIF supports multi-image files
+  (Apple's "Live Photos", depth-of-field variants). The `image`
+  crate's HEIF decoder extracts the primary image only, which
+  matches the v0 baseline behaviour for animated GIF / APNG
+  (first frame only). Captured in `docs/RUNBOOK.md` § 3.4
+  (Known limitations).
+- License / patent: `libheif` (LGPL-2.1+, static-link relink
+  procedure documented in RUNBOOK); `libde265` (GPL-2.0+ with
+  linking exception when used as a `libheif` plugin); `dav1d`
+  (BSD-2-Clause, permissive). HEVC decoder-only use does not
+  encumber HEVC patent claims in the operator's distribution
+  model; the operator should evaluate the patent landscape in
+  their jurisdiction. Documented in `docs/RUNBOOK.md` § 2.4.
+
 ## 7. Memory Budget
 
 | Source size | Decoded buffer (RGBA) | Notes |
@@ -128,7 +190,20 @@ images. Out of Wave 1 scope.
 
 ## 9. Future Work
 
-- Wave 2: add `gif`, `bmp`, `tiff`, `avif`.
+- Wave 2 (post-DE-040): add `gif`, `bmp`, `tiff`, `avif` per
+  ROADMAP § Wave 2. HEIC is delivered ahead of these (DE-040)
+  so the operator can validate the `libheif`-based build-time
+  approach (R1..R3 in ADR-0004) before committing to the
+  broader wave.
 - Wave 2: alpha-channel-aware WebP encoding (currently lossy
   without alpha via `to_rgb8`).
 - Wave 3: streaming encode for very large images.
+- ADR-0004 F-1: if binary-size pressure becomes a real
+  constraint, add a Cargo feature `heic-input` (default off)
+  that gates the `image` crate's `heif` feature; builds without
+  the feature skip the `libheif` / `libde265` / `dav1d`
+  static-link step (~1.5-2.5 MiB binary delta recovered).
+- ADR-0004 F-2: if operator demand emerges for HEIC output,
+  add a separate ADR authorising a HEIC encoder path; the
+  `image` crate does not expose HEIF encoding as of 0.25,
+  so this requires direct `libheif` encoder FFI.

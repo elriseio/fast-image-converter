@@ -117,12 +117,14 @@ For component-to-component contracts, see `contracts/`:
 
 | Dependency | Version | Purpose | Risk |
 |---|---|---|---|
-| `image` crate | 0.25 (with `jpeg`, `png`, `webp` features enabled in `Cargo.toml`) | unified decode API across input formats | API churn between minor versions; pin via `Cargo.lock` |
+| `image` crate | 0.25 (with `jpeg`, `png`, `webp`, `heif` features enabled in `Cargo.toml` per DE-040 / ADR-0004) | unified decode API across input formats | API churn between minor versions; pin via `Cargo.lock` |
 | `webp` crate | 0.3 | WebP encoder binding to `libwebp` | depends on host `libwebp`; build fails if missing |
 | `rayon` crate | 1.10 | data-parallel job dispatcher | none observed at v0 baseline |
 | `libwebp` (host) | 1.6+ | native encoder | ABI drift; pin via `pkg-config` |
+| `libheif` (host, build-time only) | 1.14+ | native HEIF/HEIC decoder (pulled in by the `image` crate's `heif` feature via `libheif-sys`; statically links `libde265` for HEVC + `dav1d` for AV1) | per ADR-0004 § Decision § 1-2: build-time system dep; CI installs via `libheif-dev` (Debian/Ubuntu) / `libheif` (Arch) / `brew install libheif` (macOS); documented in `RUNBOOK.md` § 2.4 |
 
-Build requires `pkg-config`, `cc`, and the `libwebp` development
+Build requires `pkg-config`, `cc`, the `libwebp` development
+headers, and (after DE-040 lands) the `libheif` development
 headers. These are host-level SRE concerns and live in
 `RUNBOOK.md` § Build-time failures.
 
@@ -144,6 +146,24 @@ For architectural decisions, see `adr/`:
   generic image-format converter.
 - `adr/0002-preserve-jpg-to-webp-baseline.md` — keeps the v0
   JPG→WebP pipeline as the default behaviour.
+- `adr/0003-fast-image-converter-product-name.md` — adopts
+  `fast-image-converter` as the canonical product and CLI name;
+  legacy aliases retained for at least one major version.
+- `adr/0004-add-heic-input-support.md` — adds HEIC (HEIF
+  container) as an input-only format; routes through the
+  `image` crate's `heif` feature (which statically links
+  `libheif` + `libde265` + `dav1d` via `libheif-sys`). HEIC
+  output remains explicitly out of scope.
+- `adr/0005-add-pdf-input-support-parked.md` — parked
+  decision for PDF (Portable Document Format) input-only
+  support. Library choice: `pdfium-render` (PDFium /
+  BSD-3-Clause) with static bundling. Page semantics:
+  all pages by default with `--first-page` opt-in.
+  Multi-page JSON shape (one NDJSON record per page).
+  Deferred until HEIC (DE-040) ships, the operator
+  explicitly authorises activation, and the broader
+  Wave 2 (GIF / BMP / AVIF / JXL) has not yet claimed
+  the slot.
 
 ## 9. Out of Scope
 

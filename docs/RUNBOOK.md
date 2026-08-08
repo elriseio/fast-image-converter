@@ -45,13 +45,62 @@ Arch: `sudo pacman -S base-devel`. Homebrew: `xcode-select --install`.
 ### 2.3 `image` crate build failure
 
 Cause: the `image` crate is pinned with
-`default-features = false` + `features = ["jpeg", "png", "webp"]`
-in `Cargo.toml`, which enables the JPEG / PNG / WebP decoders
-inside `image` (WebP encoding goes through the dedicated `webp`
-crate, architecturally separate). Adding a new input format may
-require extending the `features` list in `Cargo.toml` and
-rebuilding. **Do NOT touch `Cargo.toml` yourself**; the developer
-owns this and will receive a per-format handoff.
+`default-features = false` + `features = ["jpeg", "png", "webp", "heif"]`
+in `Cargo.toml` (per DE-040 / ADR-0004), which enables the JPEG /
+PNG / WebP / HEIF decoders inside `image` (WebP encoding goes
+through the dedicated `webp` crate, architecturally separate).
+Adding a new input format may require extending the `features`
+list in `Cargo.toml` and rebuilding. **Do NOT touch `Cargo.toml`
+yourself**; the developer owns this and will receive a per-format
+handoff.
+
+### 2.4 `pkg-config` cannot find `libheif` (HEIC support, added in DE-040)
+
+```
+error: failed to run custom build command for `image`
+...
+thread 'main' panicked at 'called `Result::unwrap()` on an `Err` value: PkgError(EnvError("pkg-config: libheif not found"))'
+```
+
+Fix:
+
+- Debian / Ubuntu: `sudo apt install libheif-dev libde265-dev dav1d-dev`
+- Arch: `sudo pacman -S libheif dav1d`
+- Homebrew (macOS): `brew install libheif`
+
+Re-run `cargo build --release` after install. The `heif` feature
+of the `image` crate statically links `libheif` together with
+`libde265` (HEVC decoder) and `dav1d` (AV1 decoder); all three
+are required to cover the iOS 11..16 (HEVC) and iOS 17+ (AV1)
+HEIC file populations.
+
+**License / patent notes**:
+
+- `libheif`: LGPL-2.1+ (or GPL-2.0+ at the user's option).
+  Static linking under LGPL-2.1 requires the operator to
+  retain the ability to relink the binary against a modified
+  `libheif`. The relink procedure is: (a) obtain the source
+  for `libheif` + `libde265` + `dav1d`; (b) recompile with
+  the operator's modifications; (c) relink the binary
+  against the modified libraries. The combined source tree
+  is reproducible from the `libheif-sys` build instructions.
+- `libde265`: GPL-2.0+ with a linking exception that permits
+  linking from non-GPL applications when `libde265` is used
+  as a `libheif` plugin (the binary's use here qualifies). The
+  exception text is reproduced in the `libde265` source tree.
+- `dav1d`: BSD-2-Clause (permissive, no redistribution
+  constraint).
+- HEVC decoder-only use here does not encumber HEVC patent
+  claims in the operator's distribution model. Operators in
+  jurisdictions with broader HEVC patent claims (notably the
+  US, until the patent pool expires) should evaluate the risk
+  with their counsel.
+
+**Known limitation**: the `image` crate's HEIF decoder
+extracts the primary image only from HEIF multi-image
+containers (Apple Live Photos, depth-of-field variants).
+Matches the v0 baseline behaviour for animated GIF / APNG
+(first frame only).
 
 ## 3. Runtime Incidents
 
@@ -132,12 +181,16 @@ required.
 | rustup      | 1.28+       | <https://rustup.rs>                   |
 | Rust        | 1.97.0      | pinned in `rust-toolchain.toml`       |
 | libwebp     | 1.0+        | `libwebp-dev` (Debian/Ubuntu), `libwebp` (Arch), `webp` (Homebrew) |
+| libheif     | 1.14+       | `libheif-dev` (Debian/Ubuntu, added per DE-040 / ADR-0004), `libheif` (Arch), `libheif` (Homebrew) |
+| libde265    | 1.0+        | `libde265-dev` (Debian/Ubuntu, required for HEVC HEIC decode) |
+| dav1d       | 1.0+        | `dav1d-dev` (Debian/Ubuntu, required for AV1 HEIC decode; bundled by `libheif-sys` on some hosts) |
 | pkg-config  | any         | system package manager                |
 | C compiler  | any         | `build-essential` / `base-devel` / Xcode CLT |
 | cargo-audit | ^0.22       | install once: `make audit-install`    |
 
 The CI workflow installs the same packages under Ubuntu 24.04
-(`sudo apt-get install -y libwebp-dev pkg-config build-essential`).
+(`sudo apt-get install -y libwebp-dev libheif-dev libde265-dev
+dav1d-dev pkg-config build-essential`).
 
 ### 7.2 Local Verification Command
 
@@ -169,7 +222,9 @@ every pull request and every push to `master` / `main`:
 1. Checkout.
 2. Install Rust 1.97.0 via `dtolnay/rust-toolchain` (single source
    of truth: `rust-toolchain.toml`).
-3. Install `libwebp-dev`, `pkg-config`, `build-essential`.
+3. Install `libwebp-dev`, `libheif-dev`, `libde265-dev`, `dav1d-dev`,
+   `pkg-config`, `build-essential` (per DE-040 / ADR-0004; `libheif-dev`
+   + `libde265-dev` + `dav1d-dev` are required for HEIC input).
 4. Cache the Cargo registry and `target/` keyed on
    `rust-toolchain.toml` + `Cargo.lock`; cache is **not** keyed on
    PR-supplied content (AR-005 AC-4).
@@ -234,7 +289,11 @@ Trade-offs documented here (AR-008 AC-1):
   measured size of `fast-image-converter` is ~1.9 MiB stripped (the v0
   README claimed ~1.6 MiB; the difference is the wider feature
   set: JPEG + PNG + WebP decoders, `rayon`, `libc`, plus `serde_json`
-  in tests). The legacy `gallery-compress` forwarder is ~0.37 MiB.
+  in tests). After DE-040 (HEIC input via `libheif` + `libde265`
+  + `dav1d` static-link) the size delta is expected at +1.5..+2.5
+  MiB; the developer PR must record the measured delta with
+  `ls -lh target/release/fast-image-converter` before / after.
+  The legacy `gallery-compress` forwarder is ~0.37 MiB.
 - `panic = "abort"` removes unwinding tables and the `.eh_frame`
   section. A panic in production is a process abort (not a clean
   error path), which is the right trade-off for a batch CLI
@@ -243,7 +302,9 @@ Trade-offs documented here (AR-008 AC-1):
 - `lto = "thin"` keeps the per-crate build time tractable while
   still inlining across crate boundaries. `lto = "fat"` would
   shrink the binary by another ~5% but is not worth the wall-
-  time cost for CI.
+  time cost for CI. With `libheif-sys` added in DE-040, the clean
+  build duration delta is expected at +60..+90 s on a 12-core
+  host; `sccache` in CI mitigates the cached rebuild case.
 
 ### 8.3 Installation
 
@@ -333,8 +394,17 @@ sufficient (AR-008 AC-8).
 ## 9. Source Refs
 
 - `architecture.md` — architecture overview.
-- `architecture/STATUS.md` § 3 Captured Trade-offs.
+- `architecture/STATUS.md` § 3 Captured Trade-offs (HEIC
+  input-only trade-off row per ADR-0004).
 - `components/cli-frontend.md` — exit-code contract.
 - `components/converter-core.md` — per-file failure handling.
+- `components/format-codecs.md` § 6.4 — HEIC input codec
+  family (DE-040 / ADR-0004).
 - `Issues/open/architect/AR-001_initiate_multi_format_cli.md` —
-  the canonical initiation proposal.
+  the canonical initiation proposal (Wave 1).
+- `Issues/open/architect/AR-003_add_heic_input_support.md` —
+  HEIC input proposal (Wave 2.1 driver).
+- `Issues/open/developer/DE-040_add_heic_input_codec.md` —
+  HEIC input implementation task.
+- `docs/adr/0004-add-heic-input-support.md` — HEIC input-only
+  decision.

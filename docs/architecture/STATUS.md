@@ -1,23 +1,32 @@
 ---
-project_slug: fast-image-converter
+project_slug: convert-to-webp
 doc_slug: architect_status
 doc_type: architecture_meta
 applicable_roles: [architect, developer, fixer, code_researcher]
-version: 1
+version: 2
 source_artifacts:
   - docs/architecture.md
   - docs/ROADMAP.md
   - docs/RUNBOOK.md
   - src/main.rs (v0 baseline reference)
-summary: "Architect meta-document for fast-image-converter. Captures goals, key properties, captured trade-offs, architect cycles, last-updated."
-tags: [meta, architect, status, fast-image-converter]
+  - docs/adr/0004-add-heic-input-support.md (HEIC input-only decision)
+  - Issues/open/architect/AR-003_add_heic_input_support.md (driver proposal)
+  - Issues/open/developer/DE-040_add_heic_input_codec.md (implementation task)
+summary: "Architect meta-document for convert-to-webp. Captures goals, key properties, captured trade-offs, architect cycles, last-updated. v2 adds HEIC input-only trade-off row (ADR-0004)."
+tags: [meta, architect, status, convert-to-webp]
 ---
 
-# Architect Status (fast-image-converter)
+# Architect Status (convert-to-webp)
 
-> **Last Updated**: 2026-08-04 — accepted ADR-0003 to rename the product
-> and canonical CLI to `fast-image-converter`; runtime, release, and
-> documentation rename tasks are queued.
+> **Last Updated**: 2026-08-08 — drafted ADR-0004 (HEIC input-only) and
+> AR-003 / DE-040 (driver proposal + implementation task); HEIC delivered
+> ahead of the broader AR-017 format-coverage wave so the operator can
+> validate the `libheif`-based build-time approach before committing to
+> GIF / BMP / AVIF / JXL. Parked ADR-0005 / AR-004 (PDF input-only via
+> `pdfium-render` static bundling) — activation gates on HEIC shipping,
+> explicit operator authorisation, and the broader Wave 2 slot.
+> Runtime, release, and documentation rename tasks (ADR-0003) remain
+> queued.
 
 ## 1. Goals
 
@@ -72,6 +81,8 @@ tags: [meta, architect, status, fast-image-converter]
 | Per-orientation resize policy vs always-uniform policy | Keep v0 per-orientation as the default; allow override | `adr/0002-preserve-jpg-to-webp-baseline.md` |
 | Product identity: `fast-image-converter` vs `fast-image-converter` | Adopt `fast-image-converter` as canonical product and CLI name; retain `fast-image-converter` and `gallery-compress` as compatibility aliases for at least one major version | `adr/0003-fast-image-converter-product-name.md` |
 | Hard-coded `DEFAULT_GALLERY_BASE` vs env-only vs CLI-only | Env-only with explicit "must-be-set" error for bare args. Resolved by `DE-006`; no host-specific default remains. | `RUNBOOK.md` § RD-001 |
+| HEIC input-only vs full HEIC encode/decode parity | Input-only: HEIC decoded via `image` crate `heif` feature (statically links `libheif` + `libde265` + `dav1d` via `libheif-sys`); `--output-format heic` exits 2 with usage. Rationale: every operator use case targets the existing WebP / PNG / JPEG output set; no demand for HEIC output has been expressed; the `image` crate does not expose HEIF encoding as of 0.25. Captured as ADR-0004 F-2 future work if demand emerges. | `adr/0004-add-heic-input-support.md` |
+| PDF input delivery (parked, not active) | PDF deferred until HEIC (DE-040) ships + operator explicitly authorises. Library `pdfium-render` (BSD-3-Clause, permissive-only) replaces the `libheif-sys` static-link pattern with the crate's default `static` PDFium bundling (no system-level `libpdfium-dev` required at build time). Combined binary delta ~9-14 MiB vs ~2.4 MiB today after HEIC + PDF. | `adr/0005-add-pdf-input-support-parked.md` |
 
 ## 4. Architect Cycles
 
@@ -87,7 +98,10 @@ tags: [meta, architect, status, fast-image-converter]
 
 - **Language**: Rust (edition 2021), single binary.
 - **Build**: `cargo build --release`; `Cargo.lock` pinned.
-- **Native deps**: `libwebp` via `pkg-config` + `cc`.
+- **Native deps**: `libwebp` via `pkg-config` + `cc` (WebP
+  encode); `libheif` via `pkg-config` + `cc` (HEIC decode,
+  added in DE-040 / ADR-0004; statically links `libde265` for
+  HEVC + `dav1d` for AV1 via `libheif-sys`).
 - **Parallelism**: `rayon` data-parallel scheduler (intra-process).
 - **Output formatting**: `image::DynamicImage` → format-specific
   encoder (baseline) → `webp::Encoder` for the default WebP path.
@@ -132,9 +146,21 @@ tags: [meta, architect, status, fast-image-converter]
 - `docs/adr/0001-multi-format-cli-scope.md` — scope decision.
 - `docs/adr/0002-preserve-jpg-to-webp-baseline.md` —
   backward-compat baseline decision.
+- `docs/adr/0003-fast-image-converter-product-name.md` —
+  product rename decision.
+- `docs/adr/0004-add-heic-input-support.md` — HEIC input-only
+  decision (DE-040 driver).
+- `docs/adr/0005-add-pdf-input-support-parked.md` — PDF
+  input parked decision (Wave 2.2).
 - `docs/components/README.md` — component registry.
 - `docs/contracts/README.md` — contract registry.
+- `Issues/open/architect/AR-003_add_heic_input_support.md` —
+  HEIC input proposal (Wave 2.1 driver).
+- `Issues/open/architect/AR-004_park_pdf_input_support.md` —
+  PDF input parking record (Wave 2.2 driver).
+- `Issues/open/developer/DE-040_add_heic_input_codec.md` —
+  HEIC input implementation task.
 - `Issues/open/architect/AR-001_initiate_multi_format_cli.md` —
-  initiating proposal.
+  initiating proposal (Wave 1).
 - `README.md` — operator-facing overview.
 - `src/main.rs` — v0 reference implementation (read-only).
