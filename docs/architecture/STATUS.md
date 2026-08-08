@@ -25,8 +25,13 @@ tags: [meta, architect, status, convert-to-webp]
 > GIF / BMP / AVIF / JXL. Parked ADR-0005 / AR-004 (PDF input-only via
 > `pdfium-render` static bundling) — activation gates on HEIC shipping,
 > explicit operator authorisation, and the broader Wave 2 slot.
-> Runtime, release, and documentation rename tasks (ADR-0003) remain
-> queued.
+> Expanded Wave 2 into four sub-waves (2.3 tiny formats, 2.4 animated,
+> 2.5 multi-page, 2.6 special) per ADR-0006 / AR-005 — sequenced
+> smallest-first so each delivery's review cost stays bounded; the eleven
+> remaining input formats (`bmp`, `pnm`, `tga`, `hdr`, `ff`, `qoi`,
+> `gif`, `apng`, `tiff`, `ico`, `avif`, `exr`) land across these four
+> sub-waves. Runtime, release, and documentation rename tasks (ADR-0003)
+> remain queued.
 
 ## 1. Goals
 
@@ -83,6 +88,7 @@ tags: [meta, architect, status, convert-to-webp]
 | Hard-coded `DEFAULT_GALLERY_BASE` vs env-only vs CLI-only | Env-only with explicit "must-be-set" error for bare args. Resolved by `DE-006`; no host-specific default remains. | `RUNBOOK.md` § RD-001 |
 | HEIC input-only vs full HEIC encode/decode parity | Input-only: HEIC decoded via `image` crate `heif` feature (statically links `libheif` + `libde265` + `dav1d` via `libheif-sys`); `--output-format heic` exits 2 with usage. Rationale: every operator use case targets the existing WebP / PNG / JPEG output set; no demand for HEIC output has been expressed; the `image` crate does not expose HEIF encoding as of 0.25. Captured as ADR-0004 F-2 future work if demand emerges. | `adr/0004-add-heic-input-support.md` |
 | PDF input delivery (parked, not active) | PDF deferred until HEIC (DE-040) ships + operator explicitly authorises. Library `pdfium-render` (BSD-3-Clause, permissive-only) replaces the `libheif-sys` static-link pattern with the crate's default `static` PDFium bundling (no system-level `libpdfium-dev` required at build time). Combined binary delta ~9-14 MiB vs ~2.4 MiB today after HEIC + PDF. | `adr/0005-add-pdf-input-support-parked.md` |
+| Wave 2 expansion (planned, not active) | Remaining format coverage (`bmp`, `pnm`, `tga`, `hdr`, `ff`, `qoi`, `gif`, `apng`, `tiff`, `ico`, `avif`, `exr` — 11 formats) split into 4 sub-waves (2.3 tiny, 2.4 animated, 2.5 multi-page, 2.6 special) sequenced smallest-first. All input-only; AVIF encoder remains out of scope. Wave 2.5 gates on Wave 2.2 PDF activation (the `MultiPageConversionReport` Codec trait variant is shared). Combined binary delta across all four sub-waves: ~+0.5-3.5 MiB (most from AVIF + multi-page format decoders); no new system-level C libraries required. | `adr/0006-expand-format-coverage-wave-2-3-to-2-6.md` |
 
 ## 4. Architect Cycles
 
@@ -152,12 +158,16 @@ tags: [meta, architect, status, convert-to-webp]
   decision (DE-040 driver).
 - `docs/adr/0005-add-pdf-input-support-parked.md` — PDF
   input parked decision (Wave 2.2).
+- `docs/adr/0006-expand-format-coverage-wave-2-3-to-2-6.md` —
+  Wave 2 expansion decision (sub-waves 2.3 / 2.4 / 2.5 / 2.6).
 - `docs/components/README.md` — component registry.
 - `docs/contracts/README.md` — contract registry.
 - `Issues/open/architect/AR-003_add_heic_input_support.md` —
   HEIC input proposal (Wave 2.1 driver).
 - `Issues/open/architect/AR-004_park_pdf_input_support.md` —
   PDF input parking record (Wave 2.2 driver).
+- `Issues/open/architect/AR-005_expand_format_coverage_wave_2.md` —
+  Wave 2 expansion proposal (sub-waves 2.3-2.6 driver).
 - `Issues/open/developer/DE-040_add_heic_input_codec.md` —
   HEIC input implementation task.
 - `Issues/open/architect/AR-001_initiate_multi_format_cli.md` —

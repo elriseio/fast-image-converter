@@ -57,7 +57,7 @@ handoff.
 ### 2.4 `pkg-config` cannot find `libheif` (HEIC support, added in DE-040)
 
 ```
-error: failed to run custom build command for `image`
+error: failed to run custom build command for `libheif-sys`
 ...
 thread 'main' panicked at 'called `Result::unwrap()` on an `Err` value: PkgError(EnvError("pkg-config: libheif not found"))'
 ```
@@ -68,11 +68,12 @@ Fix:
 - Arch: `sudo pacman -S libheif dav1d`
 - Homebrew (macOS): `brew install libheif`
 
-Re-run `cargo build --release` after install. The `heif` feature
-of the `image` crate statically links `libheif` together with
-`libde265` (HEVC decoder) and `dav1d` (AV1 decoder); all three
-are required to cover the iOS 11..16 (HEVC) and iOS 17+ (AV1)
-HEIC file populations.
+Re-run `cargo build --release` after install. HEIC input
+support goes through the `libheif-rs` safe wrapper around
+`libheif-sys`, which links the system `libheif` C library
+together with the `libde265` HEVC decoder and `dav1d` AV1
+decoder plugins; all three are required to cover the
+iOS 11..16 (HEVC) and iOS 17+ (AV1) HEIC file populations.
 
 **License / patent notes**:
 
@@ -90,13 +91,14 @@ HEIC file populations.
   exception text is reproduced in the `libde265` source tree.
 - `dav1d`: BSD-2-Clause (permissive, no redistribution
   constraint).
+- `libheif-rs` (safe Rust wrapper): MIT.
 - HEVC decoder-only use here does not encumber HEVC patent
   claims in the operator's distribution model. Operators in
-  jurisdictions with broader HEVC patent claims (notably the
-  US, until the patent pool expires) should evaluate the risk
+  jurisdictions with broader HEVC patent claims (notably
+  the US, until the patent pool expires) should evaluate the risk
   with their counsel.
 
-**Known limitation**: the `image` crate's HEIF decoder
+**Known limitation**: the `libheif` HEIF decoder
 extracts the primary image only from HEIF multi-image
 containers (Apple Live Photos, depth-of-field variants).
 Matches the v0 baseline behaviour for animated GIF / APNG

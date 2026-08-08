@@ -124,13 +124,23 @@ enum ResizePolicy {
   emit `.heic`, not `.heif`; the `.heif` extension is reserved
   for raw HEIF container use). The CLI flag `--input-format heif`
   is accepted as an alias for `--input-format heic`.
-- Decode: `image::ImageReader::open(...).with_guessed_format()?.decode()?`
-  — the `image` crate's `heif` feature (enabled in `Cargo.toml`
-  via `image = { features = ["jpeg", "png", "webp", "heif"] }`)
-  transparently dispatches `.heic` files to `libheif` (via
-  `libheif-sys`), which carries `libde265` for HEVC decoding and
-  `dav1d` for AV1 decoding. Both inner codecs are required to
-  cover the iOS 11..16 (HEVC) and iOS 17+ (AV1) file populations.
+- Decode: `libheif_rs::HeifContext::read_from_reader(Box::new(StreamReader::new(Cursor::new(bytes), total)))`
+  — the `libheif-rs` safe wrapper around `libheif-sys` (which
+  links the system `libheif` C library together with the
+  `libde265` HEVC and `dav1d` AV1 decoder plugins). The
+  `image` crate's `heif` feature flag does **not** exist in
+  the 0.25 line (or 0.24), so HEIC decoding routes through
+  `libheif-rs` directly rather than via the `image::ImageReader`
+  content-sniffing path. Both inner codecs are required to cover
+  the iOS 11..16 (HEVC) and iOS 17+ (AV1) file populations. The
+  decode honours the HEIF container's `irot` / `imir`
+  geometric transformations via `LibHeif::decode`'s automatic
+  transform pass; alpha is preserved when the source carries an
+  alpha auxiliary image. The decoded interleaved plane is
+  copied into a fresh `image::RgbImage` or `image::RgbaImage`
+  (depending on `has_alpha_channel`) and wrapped in a
+  `DynamicImage`. See `decode_heic_bytes` in `src/format.rs` for
+  the implementation.
 - Resize: same `PortraitLandscape` policy as the existing codecs
   (`auto:portrait=800,landscape=1000` by default; overridable via
   `--resize`).

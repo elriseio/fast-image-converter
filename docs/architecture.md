@@ -117,16 +117,22 @@ For component-to-component contracts, see `contracts/`:
 
 | Dependency | Version | Purpose | Risk |
 |---|---|---|---|
-| `image` crate | 0.25 (with `jpeg`, `png`, `webp`, `heif` features enabled in `Cargo.toml` per DE-040 / ADR-0004) | unified decode API across input formats | API churn between minor versions; pin via `Cargo.lock` |
+| `image` crate | 0.25 (with `jpeg`, `png`, `webp`, `heif` features enabled in `Cargo.toml` per DE-040 / ADR-0004; planned extensions for `bmp`, `pnm`, `tga`, `hdr`, `farbfeld`, `qoi`, `gif`, `tiff`, `ico`, `avif`, `exr` per Wave 2.3 / 2.4 / 2.5 / 2.6 / ADR-0006) | unified decode API across input formats | API churn between minor versions; pin via `Cargo.lock` |
 | `webp` crate | 0.3 | WebP encoder binding to `libwebp` | depends on host `libwebp`; build fails if missing |
 | `rayon` crate | 1.10 | data-parallel job dispatcher | none observed at v0 baseline |
 | `libwebp` (host) | 1.6+ | native encoder | ABI drift; pin via `pkg-config` |
 | `libheif` (host, build-time only) | 1.14+ | native HEIF/HEIC decoder (pulled in by the `image` crate's `heif` feature via `libheif-sys`; statically links `libde265` for HEVC + `dav1d` for AV1) | per ADR-0004 § Decision § 1-2: build-time system dep; CI installs via `libheif-dev` (Debian/Ubuntu) / `libheif` (Arch) / `brew install libheif` (macOS); documented in `RUNBOOK.md` § 2.4 |
+| `pdfium-render` crate (planned, Wave 2.2 PDF activation, ADR-0005) | 0.8+ | PDF renderer (statically bundles PDFium via the crate's default `static` feature; no system `libpdfium-dev` required at build time) | binary-size delta ~5-10 MiB; first-build downloads the pre-built PDFium binary (~30-40 MiB); documented in `RUNBOOK.md` § 2.5 (added on activation) |
+| `zip` crate (planned, Wave 2.2 PDF activation, ADR-0005) | 2+ | zip archive writer for single-file PDF mode (one image per page) | MIT or Apache-2.0; small binary delta |
 
 Build requires `pkg-config`, `cc`, the `libwebp` development
 headers, and (after DE-040 lands) the `libheif` development
 headers. These are host-level SRE concerns and live in
-`RUNBOOK.md` § Build-time failures.
+`RUNBOOK.md` § Build-time failures. Wave 2.3 / 2.4 / 2.5 / 2.6
+add no new system-level C libraries beyond `libwebp` and
+`libheif` — the eleven new format decoders are reached via
+`image` crate feature flags, which compile pure-Rust decoder
+tables (and, for AVIF, the pure-Rust `avif-decoder` crate).
 
 ## 7. Quality Attributes
 
@@ -164,6 +170,15 @@ For architectural decisions, see `adr/`:
   explicitly authorises activation, and the broader
   Wave 2 (GIF / BMP / AVIF / JXL) has not yet claimed
   the slot.
+- `adr/0006-expand-format-coverage-wave-2-3-to-2-6.md` —
+  expansion decision for the remaining format coverage:
+  Wave 2.3 (`bmp`, `pnm`, `tga`, `hdr`, `ff`, `qoi`),
+  Wave 2.4 (`gif`, `apng`), Wave 2.5 (`tiff`, `ico`;
+  gates on Wave 2.2 PDF activation for the
+  `MultiPageConversionReport` Codec trait variant),
+  Wave 2.6 (`avif`, `exr`). All input-only; AVIF encoder
+  remains out of scope. Sub-waves sequenced smallest-
+  first so each delivery's review cost stays bounded.
 
 ## 9. Out of Scope
 
